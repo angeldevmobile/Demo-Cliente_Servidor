@@ -1,0 +1,64 @@
+-- Catálogo de prueba: `orion run herramientas/generar-catalogo.orx 1000000 ruta.csv`.
+-- Cada nombre lleva un código único (KX123456) para buscar una aguja en el pajar.
+use "fs" as fs
+use "process" as proceso
+use "timewarp" as tw
+
+N    = int(proceso.arg(0, "1000000"))
+RUTA = proceso.arg(1, "datos/catalogo-grande.csv")
+
+TIPOS = {
+    "teclados":   ["Teclado mecánico", "Teclado inalámbrico", "Teclado ergonómico",
+                   "Teclado compacto", "Teclado de perfil bajo"],
+    "monitores":  ["Monitor", "Monitor curvo", "Monitor portátil", "Monitor panorámico"],
+    "audio":      ["Auriculares", "Altavoz", "Micrófono", "Barra de sonido", "Auriculares de botón"],
+    "accesorios": ["Ratón", "Alfombrilla", "Soporte de portátil", "Lámpara de escritorio",
+                   "Hub USB-C", "Brazo para monitor"]
+}
+CATEGORIAS = ["teclados", "monitores", "audio", "accesorios"]
+MARCAS = ["Nórdica", "Kora", "Veltra", "Lumo", "Arista", "Brisa", "Tundra", "Onda", "Sella", "Farol"]
+DESCRIPCIONES = [
+    "Acabado en aluminio y garantía de dos años",
+    "Conexión por cable y Bluetooth",
+    "Diseño silencioso para oficina",
+    "Ligero y pensado para viajar",
+    "Materiales reciclados y embalaje sin plástico",
+    "Compatible con Windows y macOS y Linux",
+    "Edición limitada en color arena"
+]
+
+fn centimos(c) {
+    resto = c % 100
+    if resto < 10 {
+        return str(int(c / 100)) + ".0" + str(resto)
+    }
+    return str(int(c / 100)) + "." + str(resto)
+}
+
+reloj = tw.clock()
+fs.write(RUTA, "sku,nombre,descripcion,categoria,precio,stock\n")
+
+-- Se escribe por trozos de 10.000 filas: ni una llamada al disco por fila, ni
+-- el millón entero en memoria.
+trozo = []
+i = 1
+while i <= N {
+    cat = CATEGORIAS[i % 4]
+    tipos = TIPOS[cat]
+    nombre = tipos[(i * 7) % len(tipos)] + " " + MARCAS[(i * 13) % len(MARCAS)] + " KX" + str(i)
+    desc = DESCRIPCIONES[(i * 11) % len(DESCRIPCIONES)]
+    precio = centimos(990 + (i * 7919) % 40000)
+    stock = (i * 31) % 120
+    trozo.push("GEN-" + str(i) + "," + nombre + "," + desc + "," + cat + "," + precio + "," + str(stock))
+    if len(trozo) >= 10000 {
+        fs.append(RUTA, trozo.join("\n") + "\n")
+        trozo = []
+    }
+    i = i + 1
+}
+if len(trozo) > 0 {
+    fs.append(RUTA, trozo.join("\n") + "\n")
+}
+
+show "Generadas " + str(N) + " filas en " + RUTA
+show "  " + str(int(fs.size(RUTA) / 1048576)) + " MB en " + str(tw.elapsed(reloj)) + " s"

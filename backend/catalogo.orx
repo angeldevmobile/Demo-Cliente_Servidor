@@ -1,0 +1,86 @@
+-- Catálogo: productos, búsqueda y filtros.
+use "db" as db
+use "regex" as regex
+use "backend/config" as config
+
+-- "tecla mecan" → "tecla:* & mecan:*": cada palabra como prefijo. Solo pasan
+-- letras y cifras, así lo que se escriba nunca rompe la consulta.
+fn tsquery(busqueda) {
+    partes = []
+    for p in regex.find_all(busqueda.lower(), "[\\p{L}\\p{N}]+") {
+        partes.push(p + ":*")
+    }
+    return partes.join(" & ")
+}
+
+-- El WHERE de la búsqueda, para la tienda y el panel: tsvector con índice GIN,
+-- y el SKU exacto aparte (el analizador parte "TEC-01" en trozos).
+fn filtro_busqueda(busqueda) {
+    q = tsquery(busqueda)
+    if q == "" {
+        return ["sku = ?", [busqueda.upper()]]
+    }
+    return ["(busqueda @@ to_tsquery('spanish', ?) OR sku = ?)", [q, busqueda.upper()]]
+}
+
+-- La consulta del catálogo, como [sql, params]; la usa también medir-busqueda.
+-- Con búsqueda, primero se buscan las coincidencias (índice GIN) y luego se
+-- ordenan: si no, Postgres recorre el millón de filas en orden filtrando.
+fn consulta(busqueda, categoria, tope) {
+    columnas = "id, sku, nombre, descripcion, categoria, precio, stock"
+    donde = "activo = true"
+    params = []
+    if busqueda != "" {
+        f = filtro_busqueda(busqueda)
+        donde = donde + " AND " + f[0]
+        params = params + f[1]
+    }
+    if categoria != "" {
+        donde = donde + " AND categoria = ?"
+        params = params + [categoria]
+    }
+    orden = " ORDER BY categoria, nombre LIMIT " + str(tope)
+    if busqueda == "" {
+        return ["SELECT " + columnas + " FROM productos WHERE " + donde + orden, params]
+    }
+    return ["WITH m AS MATERIALIZED (SELECT " + columnas + " FROM productos WHERE " + donde + ")
+             SELECT * FROM m" + orden, params]
+}
+
+fn listar(busqueda, categoria, limite) {
+    tope = 60
+    if limite > 0 and limite < 200 {
+        tope = limite
+    }
+    c = consulta(busqueda, categoria, tope)
+    return db.query(config.BD, c[0], c[1])
+}
+
+fn por_sku(sku) {
+    return db.first(config.BD, "SELECT id, sku, nombre, descripcion, categoria, precio, stock
+                                FROM productos WHERE sku = ? AND activo = true", [sku])
+}
+
+fn por_id(id) {
+    return db.first(config.BD, "SELECT id, sku, nombre, precio, stock
+                                FROM productos WHERE id = ? AND activo = true", [id])
+}
+
+-- Las categorías salen de los datos: una nueva aparece sola en los filtros.
+fn categorias() {
+    fuera = []
+    filas = db.query(config.BD, "SELECT categoria, COUNT(*) AS n
+                                 FROM productos WHERE activo = true
+                                 GROUP BY categoria ORDER BY categoria")
+    for f in filas {
+        fuera.push({ "nombre": f["categoria"], "productos": f["n"] })
+    }
+    return fuera
+}
+
+fn resumen() {
+    return db.first(config.BD, "SELECT COUNT(*) AS productos,
+                                       COALESCE(SUM(stock), 0) AS unidades,
+                                       COUNT(*) FILTER (WHERE stock = 0) AS agotados
+                                FROM productos WHERE activo = true")
+}

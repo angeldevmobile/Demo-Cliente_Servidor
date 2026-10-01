@@ -1,0 +1,68 @@
+-- Cola de trabajos en Postgres y no en memoria, para que la compartan varias
+-- instancias y un reinicio no se lleve lo pendiente.
+use "db" as db
+use "backend/config" as config
+
+fn encolar(tipo, datos_json) {
+    return db.insert(config.BD,
+        "INSERT INTO trabajos (tipo, datos) VALUES (?, ?) RETURNING id", [tipo, datos_json])
+}
+
+-- Reclama el siguiente trabajo en una sola sentencia: el subselect lo bloquea
+-- con SKIP LOCKED, así dos workers nunca se llevan el mismo.
+fn tomar(worker) {
+    return db.first(config.BD, "
+        UPDATE trabajos
+        SET estado = 'procesando',
+            intentos = intentos + 1,
+            tomado_por = ?,
+            tomado_en = now()
+        WHERE id = (
+            SELECT id FROM trabajos
+            WHERE estado = 'pendiente' AND ejecutar_en <= now()
+            ORDER BY id
+            FOR UPDATE SKIP LOCKED
+            LIMIT 1
+        )
+        RETURNING id, tipo, datos, intentos, max_intentos", [worker])
+}
+
+fn terminar(id) {
+    db.exec(config.BD, "UPDATE trabajos SET estado = 'hecho', terminado = now(), error = NULL
+                        WHERE id = ?", [id])
+}
+
+-- Un fallo no tira el trabajo: se reintenta con espera creciente (5s, 10s,
+-- 20s...) y solo tras agotar los intentos se marca como fallido, para que
+-- alguien pueda mirarlo.
+fn fallar(id, mensaje, intentos, max_intentos) {
+    if intentos >= max_intentos {
+        db.exec(config.BD, "UPDATE trabajos SET estado = 'fallido', error = ?, terminado = now()
+                            WHERE id = ?", [mensaje, id])
+        return "fallido"
+    }
+    espera = 5 * intentos
+    db.exec(config.BD, "UPDATE trabajos
+                        SET estado = 'pendiente', error = ?,
+                            ejecutar_en = now() + (? || ' seconds')::interval
+                        WHERE id = ?", [mensaje, str(espera), id])
+    return "reintentara"
+}
+
+-- Un worker que muere deja su trabajo en 'procesando' para siempre. Esto lo
+-- devuelve a la cola pasados unos minutos.
+fn rescatar(minutos) {
+    db.exec(config.BD, "UPDATE trabajos
+                        SET estado = 'pendiente', tomado_por = NULL, tomado_en = NULL
+                        WHERE estado = 'procesando'
+                          AND tomado_en < now() - (? || ' minutes')::interval",
+            [str(minutos)])
+}
+
+fn estadisticas() {
+    fuera = {}
+    for f in db.query(config.BD, "SELECT estado, COUNT(*) AS n FROM trabajos GROUP BY estado") {
+        fuera[f["estado"]] = f["n"]
+    }
+    return fuera
+}

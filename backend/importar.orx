@@ -1,0 +1,138 @@
+-- Carga masiva del catálogo desde un CSV por COPY. Para archivos grandes,
+-- herramientas/importar.orx (ver el README, fase 5).
+use "db" as db
+use "fs" as fs
+use "crypto" as crypto
+use "timewarp" as tw
+use "backend/config" as config
+
+COLUMNAS = ["sku", "nombre", "descripcion", "categoria", "precio", "stock"]
+
+-- COPY en streaming a una tabla de paso con columnas de texto, revisión de
+-- todas las filas (para decir qué SKU falla y por qué) y fusión en una sola
+-- sentencia. La tabla de paso es UNLOGGED y con nombre aleatorio.
+fn cargar(ruta) {
+    reloj = tw.clock()
+    paso = "carga_" + crypto.token(12)
+
+    db.exec(config.BD, "CREATE UNLOGGED TABLE " + paso + " (
+        sku TEXT, nombre TEXT, descripcion TEXT, categoria TEXT, precio TEXT, stock TEXT
+    )")
+
+    attempt {
+        r = copiar_y_fusionar(paso, ruta, reloj)
+    } handle err {
+        db.exec(config.BD, "DROP TABLE IF EXISTS " + paso)
+        error(str(err))
+    }
+    db.exec(config.BD, "DROP TABLE IF EXISTS " + paso)
+
+    -- Tras meter de golpe cientos de miles de filas, las estadísticas del
+    -- planificador están viejas y puede elegir un plan malo para la búsqueda.
+    db.exec(config.BD, "ANALYZE productos")
+
+    r["segundos"] = tw.elapsed(reloj)
+    return r
+}
+
+fn copiar_y_fusionar(paso, ruta, reloj) {
+    filas = db.copy_file(config.BD, paso, COLUMNAS, ruta, { "header": yes })
+    s_copia = tw.elapsed(reloj)
+
+    problema = revisar(paso)
+    if problema != "" {
+        error(problema)
+    }
+    s_revision = tw.elapsed(reloj) - s_copia
+
+    -- El stock de lo que ya existía no se pisa (se ajusta desde el panel); los
+    -- nuevos entran con el suyo. `xmax = 0` distingue insertado de actualizado.
+    r = db.first(config.BD, "
+        WITH f AS (
+            INSERT INTO productos (sku, nombre, descripcion, categoria, precio, stock)
+            SELECT sku, nombre, COALESCE(descripcion, ''), lower(categoria),
+                   precio::numeric(10,2), stock::integer
+            FROM " + paso + "
+            ON CONFLICT (sku) DO UPDATE SET
+                nombre      = EXCLUDED.nombre,
+                descripcion = EXCLUDED.descripcion,
+                categoria   = EXCLUDED.categoria,
+                precio      = EXCLUDED.precio,
+                activo      = true
+            RETURNING (xmax = 0) AS nuevo
+        )
+        SELECT COUNT(*) FILTER (WHERE nuevo) AS nuevos,
+               COUNT(*) FILTER (WHERE NOT nuevo) AS actualizados
+        FROM f")
+
+    return {
+        "filas": filas,
+        "nuevos": r["nuevos"],
+        "actualizados": r["actualizados"],
+        "segundos_copia": s_copia,
+        "segundos_revision": s_revision,
+        "segundos_fusion": tw.elapsed(reloj) - s_copia - s_revision
+    }
+}
+
+-- "" si todo vale; si no, las primeras filas que fallan y por qué. Los
+-- patrones de precio y stock son también los límites de NUMERIC(10,2) y de
+-- INTEGER, así que la conversión de la fusión ya no puede fallar.
+fn revisar(paso) {
+    malas = db.query(config.BD, "
+        SELECT COALESCE(NULLIF(sku, ''), '(sin SKU)') AS sku,
+               CASE
+                 WHEN COALESCE(sku, '') = ''       THEN 'falta el SKU'
+                 WHEN COALESCE(nombre, '') = ''    THEN 'falta el nombre'
+                 WHEN COALESCE(categoria, '') = '' THEN 'falta la categoría'
+                 WHEN COALESCE(precio, '') !~ '^[0-9]{1,8}([.][0-9]{1,2})?$'
+                      THEN 'precio no válido: \"' || COALESCE(precio, '') || '\"'
+                 ELSE 'stock no válido: \"' || COALESCE(stock, '') || '\"'
+               END AS problema
+        FROM " + paso + "
+        WHERE COALESCE(sku, '') = '' OR COALESCE(nombre, '') = '' OR COALESCE(categoria, '') = ''
+           OR COALESCE(precio, '') !~ '^[0-9]{1,8}([.][0-9]{1,2})?$'
+           OR COALESCE(stock, '')  !~ '^[0-9]{1,9}$'
+        LIMIT 5")
+    if len(malas) > 0 {
+        partes = []
+        for m in malas {
+            partes.push(m["sku"] + ": " + m["problema"])
+        }
+        return "filas no válidas, no se ha importado nada. " + partes.join("; ")
+    }
+
+    repetidos = db.query(config.BD, "SELECT sku FROM " + paso + " GROUP BY sku HAVING COUNT(*) > 1 LIMIT 5")
+    if len(repetidos) > 0 {
+        skus = []
+        for f in repetidos {
+            skus.push(f["sku"])
+        }
+        return "SKU repetidos en el archivo, no se ha importado nada: " + skus.join(", ")
+    }
+    return ""
+}
+
+-- Más que esto, por la línea de órdenes: `serve` lee el cuerpo entero de la
+-- petición a memoria antes de llamar al handler, así que una subida enorme
+-- ya ha costado su tamaño en RAM (varias veces) cuando llega aquí.
+MAX_SUBIDA = 50 * 1048576
+
+-- Un CSV subido desde el panel. `serve` lo deja en un temporal; se borra
+-- pase lo que pase.
+fn desde_subida(archivo) {
+    ruta = archivo["tmp_path"]
+    if archivo["size"] > MAX_SUBIDA {
+        fs.delete(ruta)
+        return { "ok": no, "codigo": 413,
+                 "error": "para archivos de más de 50 MB, usa herramientas/importar.orx" }
+    }
+    attempt {
+        r = cargar(ruta)
+    } handle err {
+        fs.delete(ruta)
+        return { "ok": no, "codigo": 400, "error": str(err) }
+    }
+    fs.delete(ruta)
+    return { "ok": yes, "codigo": 200, "error": "", "resultado": r }
+}

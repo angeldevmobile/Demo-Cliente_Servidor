@@ -1,0 +1,76 @@
+-- Utilidades de HTTP: leer la petición y montar la respuesta.
+use "json" as json
+use "backend/config" as config
+use "backend/catalogo" as catalogo
+use "backend/cola" as cola
+
+fn json_resp(status, valor) {
+    return { "status": status, "body": json.forge(valor), "content_type": "application/json" }
+}
+
+-- Parámetro de la query string, o "" si no viene.
+fn texto(req, clave) {
+    if not has_key(req["query"], clave) {
+        return ""
+    }
+    return req["query"][clave]
+}
+
+fn entero(req, clave, por_defecto) {
+    if not has_key(req["query"], clave) {
+        return por_defecto
+    }
+    attempt {
+        return int(req["query"][clave])
+    } handle err {
+        return por_defecto
+    }
+}
+
+-- El cuerpo JSON, o null si no hay o no se entiende.
+fn cuerpo(req) {
+    attempt {
+        return json.parse(req["body"])
+    } handle err {
+        return null
+    }
+}
+
+-- Un campo del cuerpo como texto, o "" si falta.
+fn campo(c, clave) {
+    if type(c) != "dict" or not has_key(c, clave) {
+        return ""
+    }
+    return str(c[clave])
+}
+
+-- Un campo del cuerpo como entero, o `por_defecto` si falta o no es número.
+fn campo_entero(c, clave, por_defecto) {
+    if type(c) != "dict" or not has_key(c, clave) {
+        return por_defecto
+    }
+    attempt {
+        return int(c[clave])
+    } handle err {
+        return por_defecto
+    }
+}
+
+-- El :id de la ruta, o 0 si no es un número.
+fn id_ruta(req) {
+    attempt {
+        return int(req["params"]["id"])
+    } handle err {
+        return 0
+    }
+}
+
+fn salud() {
+    attempt {
+        return json_resp(200, { "status": "ok", "instancia": config.INSTANCIA,
+                                "catalogo": catalogo.resumen(),
+                                "cola": cola.estadisticas() })
+    } handle err {
+        return json_resp(503, { "status": "sin base de datos", "error": str(err) })
+    }
+}

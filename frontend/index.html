@@ -1,0 +1,109 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Comercio · tu escritorio, mejor</title>
+<link rel="stylesheet" href="estilos.css">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🛍️</text></svg>">
+</head>
+<body>
+
+<header class="cabecera">
+  <div class="contenedor cabecera-fila">
+    <a class="marca" href="/">
+      <span class="marca-icono">◆</span>
+      <span>Comercio</span>
+    </a>
+
+    <form id="buscador" role="search">
+      <svg class="lupa" viewBox="0 0 24 24" aria-hidden="true">
+        <circle cx="11" cy="11" r="7"></circle><path d="M20 20l-3.5-3.5"></path>
+      </svg>
+      <input id="q" type="search" placeholder="Buscar teclados, monitores, audio…" autocomplete="off">
+    </form>
+
+    <div class="sesion">
+      <span id="quien" hidden></span>
+      <button id="entrar" class="btn-plano" hidden>Entrar</button>
+      <a id="ir-panel" class="btn-plano" href="/admin.html" hidden>Panel</a>
+      <button id="salir" class="btn-plano" hidden>Salir</button>
+      <button id="ver-carrito" class="btn-carrito" hidden>
+        <svg viewBox="0 0 24 24" aria-hidden="true">
+          <path d="M3 4h2l2.4 11.2a2 2 0 0 0 2 1.6h7.5a2 2 0 0 0 2-1.5L21 8H6"></path>
+          <circle cx="10" cy="20" r="1.4"></circle><circle cx="18" cy="20" r="1.4"></circle>
+        </svg>
+        <span id="cuenta-carrito" class="burbuja" hidden>0</span>
+      </button>
+    </div>
+  </div>
+</header>
+
+<section class="portada">
+  <div class="contenedor">
+    <h1>Tu escritorio, mejor</h1>
+    <p>Teclados, monitores y audio elegidos uno a uno. Envío en 24 horas.</p>
+    <div class="sellos">
+      <span>Envío gratis desde 50 €</span>
+      <span>Devolución en 30 días</span>
+      <span>2 años de garantía</span>
+    </div>
+  </div>
+</section>
+
+<main class="contenedor">
+  <div class="filtros">
+    <nav id="categorias" class="categorias"></nav>
+    <span id="contador" class="contador"></span>
+  </div>
+
+  <p id="aviso" class="aviso" hidden></p>
+
+  <section id="rejilla" class="rejilla">
+    <div class="esqueleto"></div><div class="esqueleto"></div>
+    <div class="esqueleto"></div><div class="esqueleto"></div>
+  </section>
+</main>
+
+<footer class="pie">
+  <div class="contenedor">
+    <p><strong>Comercio</strong> - tienda de demostración escrita en Orion sobre PostgreSQL.</p>
+    <p class="tenue">Los productos no existen y nadie te va a cobrar nada.</p>
+  </div>
+</footer>
+
+<aside id="panel-carrito" class="panel" hidden>
+  <header>
+    <h2>Tu carrito</h2>
+    <button class="cerrar" aria-label="Cerrar">×</button>
+  </header>
+  <div id="lineas" class="lineas"></div>
+  <footer>
+    <div class="total"><span>Total</span><b id="total">0,00 €</b></div>
+    <button id="pagar" class="btn-principal ancho">Comprar</button>
+  </footer>
+</aside>
+
+<aside id="panel-acceso" class="panel" hidden>
+  <header>
+    <h2 id="titulo-acceso">Entrar</h2>
+    <button class="cerrar" aria-label="Cerrar">×</button>
+  </header>
+  <form id="form-acceso">
+    <label id="campo-nombre" hidden>Nombre<input id="nombre" type="text" autocomplete="name"></label>
+    <label>Email<input id="email" type="email" autocomplete="email" required></label>
+    <label>Contraseña<input id="pass" type="password" autocomplete="current-password" required minlength="8"></label>
+    <p id="error-acceso" class="error" hidden></p>
+    <button id="enviar-acceso" class="btn-principal ancho">Entrar</button>
+    <p class="cambio">
+      <span id="texto-cambio">¿No tienes cuenta?</span>
+      <button type="button" id="cambiar-modo" class="enlace">Crear una</button>
+    </p>
+  </form>
+</aside>
+
+<div id="velo" class="velo" hidden></div>
+
+<script src="app.js"></script>
+</body>
+</html>

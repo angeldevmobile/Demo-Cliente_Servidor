@@ -1,0 +1,194 @@
+-- Informes de ventas en Excel y PDF, generados por Orion sin librerías de
+-- fuera. Los genera el worker (ver worker.orx) y los sirve la web.
+use "db" as db
+use "fs" as fs
+use "excel" as excel
+use "pdf" as pdf
+use "formato" as formato
+use "crypto" as crypto
+use "backend/config" as config
+
+-- Lo que se considera una venta: todo pedido que no se haya cancelado.
+VENTA = "p.estado <> 'cancelado' AND p.creado >= (?::text)::date AND p.creado < (?::text)::date + 1"
+
+-- Todas las cifras salen sumadas de Postgres, en NUMERIC. Orion solo las
+-- coloca: sumar dinero en coma flotante es la forma clásica de que un informe
+-- no cuadre con la caja por un céntimo.
+fn datos(desde, hasta) {
+    total = db.first(config.BD, "
+        SELECT COUNT(*) AS pedidos,
+               COALESCE(SUM(p.total), 0) AS importe,
+               COALESCE(SUM((SELECT SUM(cantidad) FROM pedido_items WHERE pedido_id = p.id)), 0) AS unidades
+        FROM pedidos p WHERE " + VENTA, [desde, hasta])
+
+    -- generate_series pone también los días sin ventas: un hueco en la
+    -- serie es información, y una gráfica hecha desde esta hoja lo necesita.
+    por_dia = db.query(config.BD, "
+        SELECT to_char(d, 'YYYY-MM-DD') AS \"Fecha\",
+               COUNT(p.id) AS \"Pedidos\",
+               COALESCE(SUM((SELECT SUM(cantidad) FROM pedido_items WHERE pedido_id = p.id)), 0) AS \"Unidades\",
+               COALESCE(SUM(p.total), 0) AS \"Importe (EUR)\"
+        FROM generate_series((?::text)::date, (?::text)::date, interval '1 day') AS d
+        LEFT JOIN pedidos p ON p.creado >= d AND p.creado < d + interval '1 day'
+                           AND p.estado <> 'cancelado'
+        GROUP BY d ORDER BY d", [desde, hasta])
+
+    -- El importe sale del precio de la LÍNEA, no del de la ficha: si el
+    -- precio cambió después de la venta, el informe dice lo que se cobró.
+    por_producto = db.query(config.BD, "
+        SELECT pr.sku AS \"SKU\", pr.nombre AS \"Producto\", pr.categoria AS \"Categoría\",
+               SUM(i.cantidad) AS \"Unidades\",
+               SUM(i.cantidad * i.precio_unitario) AS \"Importe (EUR)\"
+        FROM pedido_items i
+        JOIN pedidos p    ON p.id = i.pedido_id
+        JOIN productos pr ON pr.id = i.producto_id
+        WHERE " + VENTA + "
+        GROUP BY pr.id, pr.sku, pr.nombre, pr.categoria
+        ORDER BY SUM(i.cantidad * i.precio_unitario) DESC, pr.sku", [desde, hasta])
+
+    lista = db.query(config.BD, "
+        SELECT p.id AS \"Pedido\", to_char(p.creado, 'YYYY-MM-DD HH24:MI') AS \"Fecha\",
+               u.nombre AS \"Cliente\", u.email AS \"Email\", p.estado AS \"Estado\",
+               p.total AS \"Total (EUR)\"
+        FROM pedidos p JOIN usuarios u ON u.id = p.usuario_id
+        WHERE " + VENTA + " ORDER BY p.id", [desde, hasta])
+
+    return { "desde": desde, "hasta": hasta, "total": total,
+             "por_dia": por_dia, "por_producto": por_producto, "pedidos": lista }
+}
+
+fn eur(n) {
+    return formato.numero(n, 2, ".", ",") + " €"
+}
+
+fn ticket_medio(total) {
+    if total["pedidos"] == 0 {
+        return 0.0
+    }
+    return total["importe"] / total["pedidos"]
+}
+
+-- Cuatro hojas: el resumen y el detalle del que sale. Quien lo abre puede
+-- rehacer cualquier cifra del resumen a partir de las otras hojas.
+fn excel_de(ruta, d) {
+    t = d["total"]
+    resumen = [
+        { "Concepto": "Desde",                "Valor": d["desde"] },
+        { "Concepto": "Hasta",                "Valor": d["hasta"] },
+        { "Concepto": "Pedidos",              "Valor": t["pedidos"] },
+        { "Concepto": "Unidades vendidas",    "Valor": t["unidades"] },
+        { "Concepto": "Facturado (EUR)",      "Valor": t["importe"] },
+        { "Concepto": "Ticket medio (EUR)",   "Valor": ticket_medio(t) },
+        { "Concepto": "Productos distintos",  "Valor": len(d["por_producto"]) }
+    ]
+    excel.write_multi(ruta, {
+        "Resumen":      resumen,
+        "Por día":      d["por_dia"],
+        "Por producto": d["por_producto"],
+        "Pedidos":      d["pedidos"]
+    })
+}
+
+-- El PDF lleva el resumen y las ventas por producto y por día; la lista de
+-- pedidos va solo en el Excel. Colores de la tienda (--acento de estilos.css).
+ACENTO = "#1f6f4a"
+
+fn pdf_de(ruta, d) {
+    t = d["total"]
+    importe = { "title": "Importe", "format": "money" }
+
+    bloques = [
+        { "title": "Ventas del " + d["desde"] + " al " + d["hasta"], "color": ACENTO },
+        { "fields": { "Pedidos": t["pedidos"], "Unidades vendidas": t["unidades"],
+                      "Facturado": eur(t["importe"]), "Ticket medio": eur(ticket_medio(t)) } },
+        { "heading": "Ventas por producto" }
+    ]
+
+    productos = d["por_producto"]
+    if len(productos) == 0 {
+        bloques.push({ "text": "Sin ventas en el periodo.", "color": "gray" })
+    } else {
+        productos.push({ "SKU": "TOTAL", "Producto": str(len(productos)) + " productos", "Categoría": "",
+                         "Unidades": t["unidades"], "Importe (EUR)": t["importe"] })
+        bloques.push({ "table": productos, "total": yes, "header_bg": ACENTO, "header_color": "white",
+                       "columns": { "Unidades": { "format": "integer" }, "Importe (EUR)": importe } })
+
+        con_ventas = []
+        for dia in d["por_dia"] {
+            if dia["Pedidos"] > 0 {
+                con_ventas.push(dia)
+            }
+        }
+        bloques.push({ "heading": "Días con ventas" })
+        bloques.push({ "table": con_ventas, "header_bg": ACENTO, "header_color": "white",
+                       "columns": { "Importe (EUR)": importe } })
+    }
+
+    pdf.build(ruta, bloques, { "footer": "Comercio · informe generado por Orion",
+                               "author": "Comercio", "subject": "Informe de ventas" })
+}
+
+-- Lo llama el worker. Genera el archivo en un temporal, lo guarda en la base
+-- y borra el temporal: el disco del worker no guarda nada que importe.
+fn generar(informe_id) {
+    inf = db.first(config.BD, "
+        SELECT id, formato, to_char(desde, 'YYYY-MM-DD') AS desde, to_char(hasta, 'YYYY-MM-DD') AS hasta
+        FROM informes WHERE id = ?", [informe_id])
+    if inf == null {
+        error("el informe " + str(informe_id) + " no existe")
+    }
+
+    fs.mkdir(config.TMP)
+    ruta = fs.join(config.TMP, "generando-" + str(informe_id) + "-" + crypto.uuid() + "." + inf["formato"])
+    d = datos(inf["desde"], inf["hasta"])
+    if inf["formato"] == "xlsx" {
+        excel_de(ruta, d)
+    } else {
+        pdf_de(ruta, d)
+    }
+
+    -- El archivo viaja en base64 y Postgres lo guarda en binario (BYTEA).
+    b64 = fs.read_b64(ruta)
+    db.exec(config.BD, "UPDATE informes
+                        SET contenido = decode(?, 'base64'), bytes = ?, estado = 'listo',
+                            error = NULL, terminado = now()
+                        WHERE id = ?", [b64, fs.size(ruta), informe_id])
+    fs.delete(ruta)
+}
+
+fn marcar_fallido(informe_id, mensaje) {
+    db.exec(config.BD, "UPDATE informes SET estado = 'fallido', error = ?, terminado = now()
+                        WHERE id = ?", [mensaje, informe_id])
+}
+
+TIPOS = {
+    "xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    "pdf":  "application/pdf"
+}
+
+-- `serve` sirve archivos del disco: cada instancia baja el informe de Postgres
+-- la primera vez y lo reutiliza, porque un informe listo ya no cambia.
+fn descargar(id) {
+    inf = db.first(config.BD, "
+        SELECT id, formato, to_char(desde, 'YYYY-MM-DD') AS desde, to_char(hasta, 'YYYY-MM-DD') AS hasta
+        FROM informes WHERE id = ? AND estado = 'listo'", [id])
+    if inf == null {
+        return null
+    }
+
+    ruta = fs.join(config.TMP, "informe-" + str(id) + "." + inf["formato"])
+    if not fs.exists(ruta) {
+        fila = db.first(config.BD, "SELECT contenido FROM informes WHERE id = ?", [id])
+        -- Se escribe con otro nombre y se renombra: dos descargas a la vez
+        -- en la misma instancia nunca ven un archivo a medio escribir.
+        parcial = ruta + "." + crypto.uuid()
+        fs.write_b64(parcial, fila["contenido"])
+        fs.move(parcial, ruta)
+    }
+
+    return {
+        "ruta": ruta,
+        "tipo": TIPOS[inf["formato"]],
+        "nombre": "ventas_" + inf["desde"] + "_" + inf["hasta"] + "." + inf["formato"]
+    }
+}

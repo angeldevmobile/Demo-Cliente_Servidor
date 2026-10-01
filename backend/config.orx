@@ -1,0 +1,27 @@
+-- Configuración: todo lo que cambia entre tu máquina y un servidor.
+use "env" as entorno
+
+PORT = int(entorno.get("PORT", "8083"))
+
+-- Por defecto, el Postgres del docker-compose de esta carpeta (puerto 5433).
+BD = entorno.get("ORION_BD", "postgres://comercio:comercio@127.0.0.1:5433/comercio")
+
+FRONTEND = entorno.get("ORION_FRONTEND", "frontend")
+
+-- Quién es esta instancia. Con un balanceador delante, es lo que permite ver
+-- a qué proceso fue cada petición.
+INSTANCIA = entorno.get("ORION_INSTANCIA", "local")
+
+-- Quien tenga este secreto puede firmar un token válido para cualquier
+-- usuario: en un servidor de verdad va por entorno y no se comparte.
+JWT_SECRETO = entorno.get("ORION_JWT", "cambia-esto-en-produccion")
+JWT_HORAS   = int(entorno.get("ORION_JWT_HORAS", "12"))
+
+-- La cuenta de administración que se siembra al arrancar. Registrarse siempre
+-- da rol `cliente`: la única puerta al rol `admin` es esta.
+ADMIN_EMAIL = entorno.get("ORION_ADMIN_EMAIL", "admin@comercio.test")
+ADMIN_PASS  = entorno.get("ORION_ADMIN_PASS", "admin-de-juguete")
+
+-- Carpeta para archivos de paso: informes a medio generar y copias locales de
+-- los ya generados. Lo que vale está en Postgres; esto se puede borrar.
+TMP = entorno.get("ORION_TMP", "tmp")

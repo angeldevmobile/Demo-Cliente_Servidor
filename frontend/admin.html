@@ -1,0 +1,130 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Comercio · panel</title>
+<link rel="stylesheet" href="estilos.css">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🛍️</text></svg>">
+</head>
+<body>
+
+<header class="cabecera">
+  <div class="contenedor cabecera-fila">
+    <a class="marca" href="/">
+      <span class="marca-icono">◆</span>
+      <span>Comercio</span>
+      <span class="marca-sub">panel</span>
+    </a>
+    <nav id="pestanas" class="pestanas" hidden>
+      <button data-tab="resumen" class="pestana activa">Resumen</button>
+      <button data-tab="productos" class="pestana">Productos</button>
+      <button data-tab="pedidos" class="pestana">Pedidos</button>
+      <button data-tab="informes" class="pestana">Informes</button>
+      <button data-tab="importar" class="pestana">Importar</button>
+    </nav>
+    <div class="sesion">
+      <span id="quien" hidden></span>
+      <a href="/" class="btn-plano">Tienda</a>
+      <button id="salir" class="btn-plano" hidden>Salir</button>
+    </div>
+  </div>
+</header>
+
+<main class="contenedor">
+  <p id="aviso" class="aviso" hidden></p>
+
+  <!-- Acceso: el panel exige una cuenta con rol admin. -->
+  <section id="acceso" class="tarjeta estrecha" hidden>
+    <h2>Panel de administración</h2>
+    <p class="tenue">Entra con una cuenta de administración.</p>
+    <form id="form-acceso">
+      <label>Email<input id="email" type="email" autocomplete="email" required></label>
+      <label>Contraseña<input id="pass" type="password" autocomplete="current-password" required></label>
+      <p id="error-acceso" class="error" hidden></p>
+      <button class="btn-principal ancho">Entrar</button>
+    </form>
+  </section>
+
+  <section id="tab-resumen" class="tab" hidden>
+    <div id="kpis" class="kpis"></div>
+  </section>
+
+  <section id="tab-productos" class="tab" hidden>
+    <div class="barra">
+      <input id="q-admin" type="search" placeholder="Buscar por nombre, descripción o SKU" autocomplete="off">
+      <button id="nuevo" class="btn-principal">Nuevo producto</button>
+    </div>
+    <form id="form-producto" class="tarjeta form-rejilla" hidden>
+      <input type="hidden" id="p-id">
+      <label>SKU<input id="p-sku" required></label>
+      <label>Nombre<input id="p-nombre" required></label>
+      <label>Categoría<input id="p-categoria" required></label>
+      <label>Precio (€)<input id="p-precio" type="number" step="0.01" min="0" required></label>
+      <label id="campo-stock">Stock inicial<input id="p-stock" type="number" step="1" min="0" value="0"></label>
+      <label class="ancho-completo">Descripción<input id="p-descripcion"></label>
+      <div class="acciones ancho-completo">
+        <button class="btn-principal" id="guardar-producto">Guardar</button>
+        <button type="button" class="btn-plano" id="cancelar-producto">Cancelar</button>
+      </div>
+    </form>
+    <div class="tabla-envoltorio">
+      <table class="tabla">
+        <thead><tr><th>SKU</th><th>Producto</th><th>Categoría</th><th class="num">Precio</th><th class="num">Stock</th><th>Ajustar stock</th><th></th></tr></thead>
+        <tbody id="filas-productos"></tbody>
+      </table>
+    </div>
+  </section>
+
+  <section id="tab-pedidos" class="tab" hidden>
+    <div class="barra">
+      <select id="filtro-estado">
+        <option value="">Todos los estados</option>
+        <option value="pagado">Pagados (por enviar)</option>
+        <option value="enviado">Enviados</option>
+        <option value="entregado">Entregados</option>
+        <option value="cancelado">Cancelados</option>
+      </select>
+    </div>
+    <div class="tabla-envoltorio">
+      <table class="tabla">
+        <thead><tr><th>Pedido</th><th>Fecha</th><th>Cliente</th><th class="num">Uds.</th><th class="num">Total</th><th>Estado</th><th>Factura</th><th></th></tr></thead>
+        <tbody id="filas-pedidos"></tbody>
+      </table>
+    </div>
+  </section>
+
+  <section id="tab-informes" class="tab" hidden>
+    <form id="form-informe" class="tarjeta barra">
+      <label>Desde<input id="i-desde" type="date" required></label>
+      <label>Hasta<input id="i-hasta" type="date" required></label>
+      <label>Formato
+        <select id="i-formato"><option value="xlsx">Excel</option><option value="pdf">PDF</option></select>
+      </label>
+      <button class="btn-principal">Pedir informe</button>
+    </form>
+    <p class="tenue">Los informes los genera un worker en segundo plano: aparecen como pendientes y se pueden descargar en cuanto están listos.</p>
+    <div class="tabla-envoltorio">
+      <table class="tabla">
+        <thead><tr><th>#</th><th>Periodo</th><th>Formato</th><th>Estado</th><th class="num">Tamaño</th><th class="num">Tardó</th><th></th></tr></thead>
+        <tbody id="filas-informes"></tbody>
+      </table>
+    </div>
+  </section>
+
+  <section id="tab-importar" class="tab" hidden>
+    <form id="form-importar" class="tarjeta">
+      <p>CSV con las columnas <code>sku,nombre,descripcion,categoria,precio,stock</code>. Lo nuevo se da de alta y lo que ya existe se actualiza; el stock de lo existente no se toca.</p>
+      <div class="barra">
+        <input id="archivo" type="file" accept=".csv,text/csv" required>
+        <button class="btn-principal" id="subir">Importar</button>
+      </div>
+      <p class="tenue">Hasta 50 MB por aquí. Para catálogos grandes, <code>orion run herramientas/importar.orx archivo.csv</code>.</p>
+    </form>
+    <div id="resultado-importar" class="kpis" hidden></div>
+  </section>
+</main>
+
+<script src="admin.js"></script>
+</body>
+</html>

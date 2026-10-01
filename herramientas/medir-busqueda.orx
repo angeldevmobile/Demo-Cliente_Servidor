@@ -1,0 +1,71 @@
+-- Mide la búsqueda: ILIKE contra texto completo, con la consulta de la tienda y
+-- el tiempo de EXPLAIN ANALYZE (mediana de varias repeticiones).
+-- Uso: `orion run herramientas/medir-busqueda.orx`
+use "db" as db
+use "regex" as regex
+use "backend/config" as config
+use "backend/catalogo" as catalogo
+
+REPETICIONES = 5
+
+BASE = "SELECT id, sku, nombre, descripcion, categoria, precio, stock
+        FROM productos WHERE activo = true"
+ORDEN = " ORDER BY categoria, nombre LIMIT 60"
+
+fn milisegundos(sql, params) {
+    tiempos = []
+    for n in range(REPETICIONES) {
+        for fila in db.query(config.BD, "EXPLAIN (ANALYZE) " + sql, params) {
+            linea = fila["QUERY PLAN"]
+            if linea.contains("Execution Time") {
+                tiempos.push(float(regex.find(linea, "[0-9]+\\.[0-9]+")))
+            }
+        }
+    }
+    tiempos = tiempos.sort()
+    return tiempos[int(len(tiempos) / 2)]
+}
+
+fn ms(x) {
+    return str(int(x * 100) / 100.0) + " ms"
+}
+
+fn ilike(termino) {
+    p = "%" + termino + "%"
+    return milisegundos(BASE + " AND (nombre ILIKE ? OR descripcion ILIKE ? OR sku ILIKE ?)" + ORDEN, [p, p, p])
+}
+
+-- La consulta exacta de la tienda.
+fn texto_completo(termino) {
+    c = catalogo.consulta(termino, "", 60)
+    return milisegundos(c[0], c[1])
+}
+
+fn coinciden(termino) {
+    f = catalogo.filtro_busqueda(termino)
+    return db.first(config.BD, "SELECT COUNT(*) AS n FROM productos WHERE activo AND " + f[0], f[1])["n"]
+}
+
+total = db.first(config.BD, "SELECT COUNT(*) AS n FROM productos WHERE activo")["n"]
+generados = db.first(config.BD, "SELECT COUNT(*) AS n FROM productos WHERE sku LIKE 'GEN-%'")["n"]
+
+show "Catálogo: " + str(total) + " productos activos"
+show ""
+
+-- Una aguja (un código de modelo que existe una vez), un término común y dos
+-- palabras de un producto real (tipo y marca).
+terminos = ["auriculares"]
+if generados > 0 {
+    nombre = db.first(config.BD, "SELECT nombre FROM productos WHERE sku = ?",
+                      ["GEN-" + str(int(generados / 3))])["nombre"].split(" ")
+    terminos = ["kx" + str(int(generados / 2) + 7), "auriculares", nombre[0] + " " + nombre[len(nombre) - 2]]
+}
+
+show "  sin búsqueda (portada):    " + ms(milisegundos(BASE + ORDEN, []))
+show ""
+for t in terminos {
+    show "  «" + t + "»  (" + str(coinciden(t)) + " coinciden)"
+    show "      ILIKE '%...%':      " + ms(ilike(t))
+    show "      texto completo:     " + ms(texto_completo(t))
+    show ""
+}

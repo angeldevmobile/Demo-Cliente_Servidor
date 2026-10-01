@@ -1,0 +1,8 @@
+# Archivos de paso: informes a medio generar y copias locales de los listos.
+tmp/
+
+# Catálogos generados por herramientas/generar-catalogo.orx
+datos/catalogo-grande.csv
+catalogo-*.csv
+
+*.log

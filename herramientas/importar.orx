@@ -1,0 +1,26 @@
+-- Importa un CSV al catálogo: `orion run herramientas/importar.orx ruta.csv`.
+-- El camino para archivos grandes: va del disco a Postgres en streaming.
+use "process" as proceso
+use "fs" as fs
+use "backend/bd" as bd
+use "backend/importar" as importar
+
+RUTA = proceso.arg(0, "")
+if RUTA == "" or not fs.exists(RUTA) {
+    show "Uso: orion --run herramientas/importar.orx <archivo.csv>"
+    proceso.exit(2)
+}
+
+bd.crear_esquema()
+
+show "Importando " + RUTA + " (" + str(int(fs.size(RUTA) / 1048576)) + " MB)"
+r = importar.cargar(RUTA)
+show ""
+show "  filas leídas:     " + str(r["filas"])
+show "  productos nuevos: " + str(r["nuevos"])
+show "  actualizados:     " + str(r["actualizados"])
+show ""
+show "  COPY a la tabla de paso: " + str(r["segundos_copia"]) + " s"
+show "  revisión de las filas:   " + str(r["segundos_revision"]) + " s"
+show "  fusión con el catálogo:  " + str(r["segundos_fusion"]) + " s"
+show "  total:                   " + str(r["segundos"]) + " s"

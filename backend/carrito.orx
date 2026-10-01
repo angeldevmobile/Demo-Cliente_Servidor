@@ -1,0 +1,82 @@
+-- Carrito: una línea por producto, con la cantidad.
+use "db" as db
+use "backend/config" as config
+
+-- Cada usuario tiene un carrito; se crea la primera vez que añade algo.
+fn carrito_de(usuario_id) {
+    c = db.first(config.BD, "SELECT id FROM carritos WHERE usuario_id = ? ORDER BY id LIMIT 1", [usuario_id])
+    if c != null {
+        return c["id"]
+    }
+    return db.insert(config.BD, "INSERT INTO carritos (usuario_id) VALUES (?) RETURNING id", [usuario_id])
+}
+
+fn lineas(usuario_id) {
+    return db.query(config.BD, "
+        SELECT l.id, l.cantidad, p.id AS producto_id, p.sku, p.nombre, p.categoria,
+               p.precio, p.stock, (p.precio * l.cantidad) AS subtotal
+        FROM lineas l
+        JOIN productos p ON p.id = l.producto_id
+        JOIN carritos c  ON c.id = l.carrito_id
+        WHERE c.usuario_id = ?
+        ORDER BY l.id", [usuario_id])
+}
+
+fn resumen(usuario_id) {
+    r = db.first(config.BD, "
+        SELECT COALESCE(SUM(l.cantidad), 0) AS unidades,
+               COALESCE(SUM(p.precio * l.cantidad), 0) AS total
+        FROM lineas l
+        JOIN productos p ON p.id = l.producto_id
+        JOIN carritos c  ON c.id = l.carrito_id
+        WHERE c.usuario_id = ?", [usuario_id])
+    return { "unidades": r["unidades"], "total": r["total"], "lineas": lineas(usuario_id) }
+}
+
+-- Añadir dos veces el mismo producto suma cantidad en vez de crear otra fila:
+-- lo resuelve el UNIQUE (carrito_id, producto_id) del esquema.
+fn agregar(usuario_id, producto_id, cantidad) {
+    if cantidad < 1 {
+        return { "ok": no, "error": "la cantidad tiene que ser al menos 1" }
+    }
+    p = db.first(config.BD, "SELECT id, stock FROM productos WHERE id = ? AND activo = true", [producto_id])
+    if p == null {
+        return { "ok": no, "error": "ese producto no existe" }
+    }
+
+    cid = carrito_de(usuario_id)
+    ya = db.first(config.BD, "SELECT cantidad FROM lineas WHERE carrito_id = ? AND producto_id = ?", [cid, producto_id])
+    pedidas = cantidad
+    if ya != null {
+        pedidas = ya["cantidad"] + cantidad
+    }
+
+    -- Aviso temprano para no dejar que alguien llene el carrito de algo que no
+    -- hay. El control que de verdad manda es el del checkout: entre este
+    -- momento y el pago, otro puede haberse llevado las últimas unidades.
+    if pedidas > p["stock"] {
+        return { "ok": no, "error": "solo quedan " + str(p["stock"]) + " unidades" }
+    }
+
+    db.exec(config.BD, "
+        INSERT INTO lineas (carrito_id, producto_id, cantidad) VALUES (?, ?, ?)
+        ON CONFLICT (carrito_id, producto_id)
+        DO UPDATE SET cantidad = lineas.cantidad + EXCLUDED.cantidad",
+        [cid, producto_id, cantidad])
+
+    return { "ok": yes, "error": "" }
+}
+
+fn quitar(usuario_id, linea_id) {
+    db.exec(config.BD, "
+        DELETE FROM lineas
+        WHERE id = ? AND carrito_id IN (SELECT id FROM carritos WHERE usuario_id = ?)",
+        [linea_id, usuario_id])
+    return { "ok": yes, "error": "" }
+}
+
+fn vaciar(usuario_id) {
+    db.exec(config.BD, "
+        DELETE FROM lineas
+        WHERE carrito_id IN (SELECT id FROM carritos WHERE usuario_id = ?)", [usuario_id])
+}

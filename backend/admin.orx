@@ -1,0 +1,296 @@
+-- Panel de administración: productos, stock, pedidos e informes. El rol lo
+-- comprueba el middleware de main.orx; aquí solo hay reglas de negocio.
+use "db" as db
+use "backend/config" as config
+use "backend/catalogo" as catalogo
+
+CATEGORIA_MAX = 40
+
+--   Productos
+
+-- A diferencia del catálogo de la tienda, aquí salen también los inactivos:
+-- un producto retirado sigue existiendo, y hay que poder reactivarlo.
+fn productos(busqueda, limite) {
+    tope = 100
+    if limite > 0 and limite <= 500 {
+        tope = limite
+    }
+    sql = "SELECT id, sku, nombre, descripcion, categoria, precio, stock, activo FROM productos"
+    params = []
+    if busqueda != "" {
+        f = catalogo.filtro_busqueda(busqueda)
+        sql = sql + " WHERE " + f[0]
+        params = f[1]
+    }
+    return db.query(config.BD, sql + " ORDER BY id DESC LIMIT " + str(tope), params)
+}
+
+fn texto(d, clave) {
+    if not has_key(d, clave) or d[clave] == null {
+        return ""
+    }
+    return str(d[clave]).trim()
+}
+
+-- Revisa los campos que vengan. `completo` exige todos (alta); sin él, solo
+-- se revisan los presentes (edición parcial).
+fn revisar(d, completo) {
+    for campo in ["sku", "nombre", "categoria"] {
+        if (completo or has_key(d, campo)) and texto(d, campo) == "" {
+            return "falta " + campo
+        }
+    }
+    if len(texto(d, "categoria")) > CATEGORIA_MAX {
+        return "la categoría es demasiado larga"
+    }
+    if completo or has_key(d, "precio") {
+        attempt {
+            if float(d["precio"]) < 0 {
+                return "el precio no puede ser negativo"
+            }
+        } handle err {
+            return "el precio tiene que ser un número"
+        }
+    }
+    if has_key(d, "stock") {
+        attempt {
+            if int(d["stock"]) < 0 {
+                return "el stock no puede ser negativo"
+            }
+        } handle err {
+            return "el stock tiene que ser un número entero"
+        }
+    }
+    return ""
+}
+
+fn crear_producto(d) {
+    if type(d) != "dict" {
+        return { "ok": no, "error": "faltan los datos del producto" }
+    }
+    problema = revisar(d, yes)
+    if problema != "" {
+        return { "ok": no, "error": problema }
+    }
+    stock = 0
+    if has_key(d, "stock") {
+        stock = int(d["stock"])
+    }
+
+    sku = texto(d, "sku").upper()
+    attempt {
+        id = db.insert(config.BD, "
+            INSERT INTO productos (sku, nombre, descripcion, categoria, precio, stock)
+            VALUES (?, ?, ?, ?, ?, ?) RETURNING id",
+            [sku, texto(d, "nombre"), texto(d, "descripcion"),
+             texto(d, "categoria").lower(), float(d["precio"]), stock])
+    } handle err {
+        -- 23505: el UNIQUE de `sku` es quien impide el duplicado.
+        if str(err).contains("SQLSTATE 23505") {
+            return { "ok": no, "error": "ya hay un producto con el SKU " + sku }
+        }
+        return { "ok": no, "error": "no se pudo dar de alta: " + str(err) }
+    }
+    return { "ok": yes, "error": "", "producto": por_id(id) }
+}
+
+-- Edición parcial: cambia solo lo que venga. El stock se ajusta aparte, y
+-- cambiar el precio no toca los pedidos (cada línea guarda el suyo).
+fn editar_producto(id, d) {
+    if type(d) != "dict" {
+        return { "ok": no, "error": "faltan los datos del producto" }
+    }
+    problema = revisar(d, no)
+    if problema != "" {
+        return { "ok": no, "error": problema }
+    }
+
+    sets = []
+    params = []
+    for campo in ["nombre", "descripcion", "categoria"] {
+        if has_key(d, campo) {
+            sets.push(campo + " = ?")
+            valor = texto(d, campo)
+            if campo == "categoria" {
+                valor = valor.lower()
+            }
+            params.push(valor)
+        }
+    }
+    if has_key(d, "precio") {
+        sets.push("precio = ?")
+        params.push(float(d["precio"]))
+    }
+    if has_key(d, "activo") {
+        sets.push("activo = ?")
+        params.push(d["activo"] == yes)
+    }
+    if len(sets) == 0 {
+        return { "ok": no, "error": "no hay nada que cambiar" }
+    }
+
+    params.push(id)
+    fila = db.first(config.BD, "UPDATE productos SET " + sets.join(", ") + " WHERE id = ? RETURNING id", params)
+    if fila == null {
+        return { "ok": no, "error": "no existe ese producto" }
+    }
+    return { "ok": yes, "error": "", "producto": por_id(id) }
+}
+
+-- El stock se ajusta (+5, -2), no se fija: fijarlo se comería las ventas
+-- hechas desde que se cargó la página. Bajo cero lo para el CHECK del esquema.
+fn ajustar_stock(id, delta) {
+    if delta == 0 {
+        return { "ok": no, "error": "el ajuste no puede ser cero" }
+    }
+    attempt {
+        fila = db.first(config.BD, "UPDATE productos SET stock = stock + ? WHERE id = ? RETURNING stock",
+                        [delta, id])
+    } handle err {
+        -- 23514: el CHECK (stock >= 0) del esquema.
+        if str(err).contains("SQLSTATE 23514") {
+            return { "ok": no, "error": "no hay tantas unidades para quitar" }
+        }
+        return { "ok": no, "error": str(err) }
+    }
+    if fila == null {
+        return { "ok": no, "error": "no existe ese producto" }
+    }
+    return { "ok": yes, "error": "", "stock": fila["stock"] }
+}
+
+fn por_id(id) {
+    return db.first(config.BD, "SELECT id, sku, nombre, descripcion, categoria, precio, stock, activo
+                                FROM productos WHERE id = ?", [id])
+}
+
+--   Pedidos
+
+-- De qué estado se puede llegar a cada uno. Un pedido entregado no se
+-- cancela desde aquí (eso es una devolución, otro proceso), y uno enviado
+-- tampoco: el paquete ya salió.
+DESDE = { "enviado": "pagado", "entregado": "enviado", "cancelado": "pagado" }
+
+fn pedidos(estado, limite) {
+    tope = 100
+    if limite > 0 and limite <= 500 {
+        tope = limite
+    }
+    sql = "SELECT p.id, p.total, p.estado, to_char(p.creado, 'YYYY-MM-DD HH24:MI') AS creado,
+                  u.nombre AS cliente, u.email,
+                  (SELECT COALESCE(SUM(cantidad), 0) FROM pedido_items WHERE pedido_id = p.id) AS unidades,
+                  f.numero AS factura
+           FROM pedidos p
+           JOIN usuarios u ON u.id = p.usuario_id
+           LEFT JOIN facturas f ON f.pedido_id = p.id"
+    params = []
+    if estado != "" {
+        sql = sql + " WHERE p.estado = ?"
+        params = [estado]
+    }
+    return db.query(config.BD, sql + " ORDER BY p.id DESC LIMIT " + str(tope), params)
+}
+
+-- El estado de partida va en el WHERE: si dos personas del panel pulsan a la
+-- vez "enviado" y "cancelado", solo una de las dos transiciones encuentra la
+-- fila en 'pagado'. La otra no toca nada y se entera.
+fn cambiar_estado(id, hacia) {
+    if not has_key(DESDE, hacia) {
+        return { "ok": no, "error": "estado desconocido: " + hacia }
+    }
+    if hacia == "cancelado" {
+        return cancelar(id)
+    }
+    fila = db.first(config.BD, "UPDATE pedidos SET estado = ? WHERE id = ? AND estado = ? RETURNING id",
+                    [hacia, id, DESDE[hacia]])
+    if fila == null {
+        return { "ok": no, "error": "el pedido no está en '" + DESDE[hacia] + "'" }
+    }
+    return { "ok": yes, "error": "" }
+}
+
+-- Cancelar y reponer el stock en una sola sentencia (WITH con dos UPDATE): o
+-- las dos cosas o ninguna. Si el pedido ya no estaba pagado, no repone nada.
+fn cancelar(id) {
+    r = db.first(config.BD, "
+        WITH c AS (
+            UPDATE pedidos SET estado = 'cancelado'
+            WHERE id = ? AND estado = 'pagado'
+            RETURNING id
+        ), repuesto AS (
+            UPDATE productos pr SET stock = pr.stock + i.cantidad
+            FROM pedido_items i JOIN c ON c.id = i.pedido_id
+            WHERE pr.id = i.producto_id
+            RETURNING pr.id
+        )
+        SELECT (SELECT COUNT(*) FROM c) AS cancelados,
+               (SELECT COUNT(*) FROM repuesto) AS productos", [id])
+    if r["cancelados"] == 0 {
+        return { "ok": no, "error": "solo se puede cancelar un pedido pagado y sin enviar" }
+    }
+    return { "ok": yes, "error": "", "productos_repuestos": r["productos"] }
+}
+
+--   Resumen
+
+fn resumen() {
+    return db.first(config.BD, "
+        SELECT
+          (SELECT COUNT(*) FROM pedidos
+             WHERE creado >= current_date AND estado <> 'cancelado') AS pedidos_hoy,
+          (SELECT COALESCE(SUM(total), 0) FROM pedidos
+             WHERE creado >= current_date AND estado <> 'cancelado') AS ventas_hoy,
+          (SELECT COALESCE(SUM(total), 0) FROM pedidos
+             WHERE creado >= date_trunc('month', current_date) AND estado <> 'cancelado') AS ventas_mes,
+          (SELECT COUNT(*) FROM pedidos WHERE estado = 'pagado') AS por_enviar,
+          (SELECT COUNT(*) FROM productos WHERE activo AND stock = 0) AS agotados,
+          (SELECT COUNT(*) FROM productos WHERE activo AND stock BETWEEN 1 AND 5) AS pocas_unidades,
+          (SELECT COUNT(*) FROM trabajos WHERE estado IN ('pendiente', 'procesando')) AS trabajos_en_cola")
+}
+
+--   Informes
+
+FORMATOS = ["xlsx", "pdf"]
+MAX_DIAS = 366
+
+-- Pedir un informe lo encola, no lo genera. Informe y trabajo se crean en una
+-- sola sentencia, así nunca queda un informe pendiente sin trabajo que lo haga.
+fn pedir_informe(usuario_id, formato, desde, hasta) {
+    if not FORMATOS.contains(formato) {
+        return { "ok": no, "error": "el formato tiene que ser xlsx o pdf" }
+    }
+    attempt {
+        dias = db.first(config.BD, "SELECT (?::text)::date AS d, (?::text)::date - (?::text)::date AS n",
+                        [desde, hasta, desde])
+    } handle err {
+        return { "ok": no, "error": "las fechas van en formato AAAA-MM-DD" }
+    }
+    if dias["n"] < 0 {
+        return { "ok": no, "error": "la fecha final es anterior a la inicial" }
+    }
+    if dias["n"] >= MAX_DIAS {
+        return { "ok": no, "error": "como mucho un año por informe" }
+    }
+
+    fila = db.first(config.BD, "
+        WITH i AS (
+            INSERT INTO informes (formato, desde, hasta, pedido_por)
+            VALUES (?, (?::text)::date, (?::text)::date, ?)
+            RETURNING id
+        ), t AS (
+            INSERT INTO trabajos (tipo, datos)
+            SELECT 'informe', json_build_object('informe_id', id)::text FROM i
+        )
+        SELECT id FROM i", [formato, desde, hasta, usuario_id])
+    return { "ok": yes, "error": "", "id": fila["id"] }
+}
+
+-- Sin `contenido`: la lista no tiene por qué arrastrar los archivos.
+fn informes() {
+    return db.query(config.BD, "
+        SELECT id, formato, to_char(desde, 'YYYY-MM-DD') AS desde, to_char(hasta, 'YYYY-MM-DD') AS hasta,
+               estado, bytes, error,
+               to_char(creado, 'YYYY-MM-DD HH24:MI:SS') AS creado,
+               round(EXTRACT(EPOCH FROM terminado - creado)::numeric, 2) AS segundos
+        FROM informes ORDER BY id DESC LIMIT 20")
+}

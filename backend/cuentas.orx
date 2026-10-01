@@ -1,0 +1,86 @@
+-- Cuentas: registro, acceso y tokens.
+use "db" as db
+use "auth" as auth
+use "validate" as valida
+use "backend/config" as config
+
+MIN_PASS = 8
+
+-- Devuelve { ok, error } para que el handler decida el código HTTP.
+fn revisar_datos(email, pass, nombre) {
+    if not valida.email(email) {
+        return { "ok": no, "error": "ese email no tiene buena pinta" }
+    }
+    if len(pass) < MIN_PASS {
+        return { "ok": no, "error": "la contraseña necesita al menos " + str(MIN_PASS) + " caracteres" }
+    }
+    if len(nombre.trim()) < 2 {
+        return { "ok": no, "error": "falta el nombre" }
+    }
+    return { "ok": yes, "error": "" }
+}
+
+fn existe(email) {
+    return db.first(config.BD, "SELECT id FROM usuarios WHERE email = ?", [email.lower()]) != null
+}
+
+fn registrar(email, pass, nombre) {
+    revision = revisar_datos(email, pass, nombre)
+    if not revision["ok"] {
+        return revision
+    }
+    if existe(email) {
+        return { "ok": no, "error": "ya hay una cuenta con ese email" }
+    }
+
+    -- Se guarda el hash argon2id, nunca la contraseña. Ni yo puedo leerla.
+    id = db.insert(config.BD,
+        "INSERT INTO usuarios (email, hash_pass, nombre) VALUES (?, ?, ?) RETURNING id",
+        [email.lower(), auth.hash(pass), nombre.trim()])
+
+    return { "ok": yes, "error": "", "usuario": { "id": id, "email": email.lower(), "nombre": nombre.trim(), "rol": "cliente" } }
+}
+
+fn login(email, pass) {
+    u = db.first(config.BD,
+        "SELECT id, email, nombre, rol, hash_pass FROM usuarios WHERE email = ?", [email.lower()])
+
+    -- El mismo mensaje si el email no existe o si la contraseña falla: decir
+    -- cuál de las dos es regala una lista de emails registrados.
+    if u == null or not auth.verify(pass, u["hash_pass"]) {
+        return { "ok": no, "error": "email o contraseña incorrectos" }
+    }
+
+    return {
+        "ok": yes, "error": "",
+        "token": emitir_token(u),
+        "usuario": { "id": u["id"], "email": u["email"], "nombre": u["nombre"], "rol": u["rol"] }
+    }
+}
+
+fn emitir_token(u) {
+    return auth.token(
+        { "sub": u["id"], "email": u["email"], "nombre": u["nombre"], "rol": u["rol"] },
+        config.JWT_SECRETO,
+        config.JWT_HORAS * 3600)
+}
+
+-- El id del usuario sale del token que ya validó router.guard.
+fn id_de(req) {
+    if not has_key(req, "user") {
+        return 0
+    }
+    attempt {
+        return int(req["user"]["sub"])
+    } handle err {
+        return 0
+    }
+}
+
+fn por_id(id) {
+    return db.first(config.BD, "SELECT id, email, nombre, rol, creado FROM usuarios WHERE id = ?", [id])
+}
+
+fn es_admin(req) {
+    return has_key(req, "user") and req["user"]["rol"] == "admin"
+}

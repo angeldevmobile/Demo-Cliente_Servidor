@@ -1,0 +1,247 @@
+-- Comercio: rutas y arranque. La lógica vive en los módulos de backend/.
+use "router" as router
+use "backend/config" as config
+use "backend/http" as http
+use "backend/bd" as bd
+use "backend/catalogo" as catalogo
+use "backend/cuentas" as cuentas
+use "backend/carrito" as carrito
+use "backend/pedidos" as pedidos
+use "backend/admin" as admin
+use "backend/informes" as informes
+use "backend/importar" as importar
+
+fn api_productos(req) {
+    return http.json_resp(200, catalogo.listar(http.texto(req, "q"), http.texto(req, "cat"), http.entero(req, "limite", 0)))
+}
+
+fn api_producto(req) {
+    p = catalogo.por_sku(req["params"]["sku"])
+    if p == null {
+        return http.json_resp(404, { "error": "no existe ese producto" })
+    }
+    return http.json_resp(200, p)
+}
+
+fn api_categorias(req) {
+    return http.json_resp(200, catalogo.categorias())
+}
+
+fn api_registro(req) {
+    c = http.cuerpo(req)
+    r = cuentas.registrar(http.campo(c, "email"), http.campo(c, "pass"), http.campo(c, "nombre"))
+    if not r["ok"] {
+        return http.json_resp(400, { "error": r["error"] })
+    }
+    -- Tras registrarse ya queda dentro: pedir el login otra vez es una
+    -- molestia sin ninguna ganancia.
+    entrada = cuentas.login(http.campo(c, "email"), http.campo(c, "pass"))
+    return http.json_resp(201, { "token": entrada["token"], "usuario": entrada["usuario"] })
+}
+
+fn api_login(req) {
+    c = http.cuerpo(req)
+    r = cuentas.login(http.campo(c, "email"), http.campo(c, "pass"))
+    if not r["ok"] {
+        return http.json_resp(401, { "error": r["error"] })
+    }
+    return http.json_resp(200, { "token": r["token"], "usuario": r["usuario"] })
+}
+
+fn api_yo(req) {
+    u = cuentas.por_id(cuentas.id_de(req))
+    if u == null {
+        return http.json_resp(404, { "error": "la cuenta ya no existe" })
+    }
+    return http.json_resp(200, u)
+}
+
+fn api_carrito(req) {
+    return http.json_resp(200, carrito.resumen(cuentas.id_de(req)))
+}
+
+fn api_agregar(req) {
+    c = http.cuerpo(req)
+    id = http.campo_entero(c, "producto_id", 0)
+    if id == 0 {
+        return http.json_resp(400, { "error": "falta producto_id" })
+    }
+    cant = http.campo_entero(c, "cantidad", 1)
+
+    r = carrito.agregar(cuentas.id_de(req), id, cant)
+    if not r["ok"] {
+        return http.json_resp(409, { "error": r["error"] })
+    }
+    return http.json_resp(200, carrito.resumen(cuentas.id_de(req)))
+}
+
+fn api_quitar(req) {
+    carrito.quitar(cuentas.id_de(req), http.id_ruta(req))
+    return http.json_resp(200, carrito.resumen(cuentas.id_de(req)))
+}
+
+fn api_checkout(req) {
+    r = pedidos.comprar(cuentas.id_de(req))
+    if not r["ok"] {
+        -- 409: la petición era válida, pero el estado de la tienda cambió.
+        return http.json_resp(409, { "error": r["error"], "agotadas": r["agotadas"] })
+    }
+    return http.json_resp(201, r["pedido"])
+}
+
+fn api_pedidos(req) {
+    return http.json_resp(200, pedidos.mios(cuentas.id_de(req)))
+}
+
+fn api_salud(req) {
+    return http.salud()
+}
+
+--   Administración: router.guard exige un JWT válido (401) y `solo_admin`,
+--   el rol admin (403), antes de llegar a los handlers.
+
+-- El rol se lee del token, sin consultar la base: el token está firmado y no
+-- se puede editar. El precio es que si a alguien se le quita el rol, lo
+-- conserva hasta que su token caduque (ORION_JWT_HORAS).
+fn solo_admin(req) {
+    if not req["path"].starts_with("/api/admin") {
+        return null
+    }
+    if not cuentas.es_admin(req) {
+        return http.json_resp(403, { "error": "hace falta una cuenta de administración" })
+    }
+    return null
+}
+
+fn api_admin_resumen(req) {
+    return http.json_resp(200, admin.resumen())
+}
+
+fn api_admin_productos(req) {
+    return http.json_resp(200, admin.productos(http.texto(req, "q"), http.entero(req, "limite", 0)))
+}
+
+fn api_admin_crear(req) {
+    r = admin.crear_producto(http.cuerpo(req))
+    if not r["ok"] {
+        return http.json_resp(400, { "error": r["error"] })
+    }
+    return http.json_resp(201, r["producto"])
+}
+
+fn api_admin_editar(req) {
+    r = admin.editar_producto(http.id_ruta(req), http.cuerpo(req))
+    if not r["ok"] {
+        return http.json_resp(400, { "error": r["error"] })
+    }
+    return http.json_resp(200, r["producto"])
+}
+
+fn api_admin_stock(req) {
+    delta = http.campo_entero(http.cuerpo(req), "delta", 0)
+    r = admin.ajustar_stock(http.id_ruta(req), delta)
+    if not r["ok"] {
+        return http.json_resp(409, { "error": r["error"] })
+    }
+    return http.json_resp(200, { "stock": r["stock"] })
+}
+
+fn api_admin_pedidos(req) {
+    return http.json_resp(200, admin.pedidos(http.texto(req, "estado"), http.entero(req, "limite", 0)))
+}
+
+fn api_admin_estado(req) {
+    r = admin.cambiar_estado(http.id_ruta(req), http.campo(http.cuerpo(req), "estado"))
+    if not r["ok"] {
+        return http.json_resp(409, { "error": r["error"] })
+    }
+    return http.json_resp(200, r)
+}
+
+fn api_admin_informes(req) {
+    return http.json_resp(200, admin.informes())
+}
+
+-- 202: aceptado, no hecho. El informe lo genera un worker; el panel consulta
+-- la lista hasta verlo en 'listo'.
+fn api_admin_pedir_informe(req) {
+    c = http.cuerpo(req)
+    r = admin.pedir_informe(cuentas.id_de(req), http.campo(c, "formato"), http.campo(c, "desde"), http.campo(c, "hasta"))
+    if not r["ok"] {
+        return http.json_resp(400, { "error": r["error"] })
+    }
+    return http.json_resp(202, { "id": r["id"], "estado": "pendiente" })
+}
+
+fn api_admin_descargar(req) {
+    d = informes.descargar(http.id_ruta(req))
+    if d == null {
+        return http.json_resp(404, { "error": "ese informe no existe o aún no está listo" })
+    }
+    return {
+        "file": d["ruta"],
+        "content_type": d["tipo"],
+        "headers": { "Content-Disposition": "attachment; filename=\"" + d["nombre"] + "\"" }
+    }
+}
+
+fn api_admin_importar(req) {
+    if len(req["files"]) == 0 {
+        return http.json_resp(400, { "error": "falta el archivo CSV" })
+    }
+    r = importar.desde_subida(req["files"][0])
+    if not r["ok"] {
+        return http.json_resp(r["codigo"], { "error": r["error"] })
+    }
+    return http.json_resp(200, r["resultado"])
+}
+
+fn no_encontrado(req) {
+    return http.json_resp(404, { "error": "ruta no encontrada", "path": req["path"] })
+}
+
+puestos = bd.preparar("datos/catalogo.csv")
+
+r = router.new()
+router.get(r, "/api/productos",      "api_productos")
+router.get(r, "/api/productos/:sku", "api_producto")
+router.get(r, "/api/categorias",     "api_categorias")
+router.post(r, "/api/registro",      "api_registro")
+router.post(r, "/api/login",         "api_login")
+router.get(r,  "/api/yo",            "api_yo")
+router.get(r,    "/api/carrito",      "api_carrito")
+router.post(r,   "/api/carrito",      "api_agregar")
+router.delete(r, "/api/carrito/:id",  "api_quitar")
+router.post(r,   "/api/checkout",     "api_checkout")
+router.get(r,    "/api/pedidos",      "api_pedidos")
+router.get(r, "/health",             "api_salud")
+
+router.get(r,  "/api/admin/resumen",              "api_admin_resumen")
+router.get(r,  "/api/admin/productos",            "api_admin_productos")
+router.post(r, "/api/admin/productos",            "api_admin_crear")
+router.put(r,  "/api/admin/productos/:id",        "api_admin_editar")
+router.post(r, "/api/admin/productos/:id/stock",  "api_admin_stock")
+router.get(r,  "/api/admin/pedidos",              "api_admin_pedidos")
+router.put(r,  "/api/admin/pedidos/:id",          "api_admin_estado")
+router.get(r,  "/api/admin/informes",             "api_admin_informes")
+router.post(r, "/api/admin/informes",             "api_admin_pedir_informe")
+router.get(r,  "/api/admin/informes/:id",         "api_admin_descargar")
+router.post(r, "/api/admin/importar",             "api_admin_importar")
+
+-- Todo lo que cuelgue de /api/yo exige un JWT válido: sin él, serve responde
+-- 401 y el handler ni se ejecuta.
+router.guard(r, "/api/yo",       config.JWT_SECRETO)
+router.guard(r, "/api/carrito",  config.JWT_SECRETO)
+router.guard(r, "/api/checkout", config.JWT_SECRETO)
+router.guard(r, "/api/pedidos",  config.JWT_SECRETO)
+router.guard(r, "/api/admin",    config.JWT_SECRETO)
+router.use_middleware(r, "solo_admin")
+router.static(r, "/", config.FRONTEND)
+router.attach(r)
+
+show "Comercio  ·  http://localhost:" + str(config.PORT)
+if puestos > 0 {
+    show "  catálogo sembrado: " + str(puestos) + " productos"
+}
+show ""
+serve config.PORT no_encontrado

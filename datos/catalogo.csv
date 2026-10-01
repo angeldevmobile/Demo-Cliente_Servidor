@@ -1,0 +1,17 @@
+sku,nombre,descripcion,categoria,precio,stock
+TEC-01,Teclado mecánico 75%,Switches táctiles y cuerpo de aluminio,teclados,89.90,14
+TEC-02,Teclado inalámbrico bajo perfil,Tres dispositivos a la vez por Bluetooth,teclados,54.50,22
+TEC-03,Teclado ergonómico partido,Dos mitades separables con reposamuñecas,teclados,129.00,6
+TEC-04,Teclado 60% para viaje,Sin bloque numérico y con funda rígida,teclados,45.00,31
+MON-01,Monitor 27 pulgadas 144 Hz,Panel IPS con 1 ms de respuesta,monitores,249.00,9
+MON-02,Monitor 24 pulgadas IPS,Altura regulable y entrada USB-C,monitores,159.95,17
+MON-03,Monitor ultrapanorámico 34 pulgadas,Curvatura 1000R para dos ventanas a la vez,monitores,499.00,4
+MON-04,Monitor portátil 15 pulgadas,Se alimenta por el mismo cable que la señal,monitores,189.00,11
+AUD-01,Auriculares con cancelación,Treinta horas de batería y estuche,audio,199.00,12
+AUD-02,Micrófono USB cardioide,Con filtro antipop y brazo articulado,audio,89.00,19
+AUD-03,Altavoces de escritorio,Dos vías y salida para auriculares,audio,74.90,8
+AUD-04,Interfaz de audio 2 canales,Dos entradas XLR con alimentación fantasma,audio,139.00,5
+ACC-01,Alfombrilla extragrande,Base de goma y bordes cosidos,accesorios,19.90,40
+ACC-02,Soporte de monitor con pinza,Brazo articulado hasta 9 kg,accesorios,64.00,13
+ACC-03,Hub USB-C de 7 puertos,"Con HDMI, lector de tarjetas y carga",accesorios,49.90,25
+ACC-04,Lámpara de barra para monitor,Luz sin reflejos y temperatura regulable,accesorios,59.00,1
