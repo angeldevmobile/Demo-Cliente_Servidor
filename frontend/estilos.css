@@ -6,6 +6,7 @@
   --suave:   #6b7280;
   --acento:  #1f6f4a;
   --acento2: #2f9c68;
+  --sobre-acento: #ffffff;
   --rojo:    #c0392b;
   --sombra:  0 1px 2px rgba(19,26,33,.05), 0 8px 24px rgba(19,26,33,.06);
   --radio:   .7rem;
@@ -14,6 +15,7 @@
   :root {
     --tinta:#e8e6e1; --papel:#0e1215; --carta:#161b20; --borde:#252c33;
     --suave:#96a0aa; --acento:#7fd1a5; --acento2:#5cba8a; --rojo:#f08a7e;
+    --sobre-acento: #0e1215;
     --sombra: 0 1px 2px rgba(0,0,0,.3), 0 8px 24px rgba(0,0,0,.25);
   }
 }
@@ -63,7 +65,7 @@ body {
 button { font: inherit; cursor: pointer; border: 0; background: none; color: inherit }
 .btn-principal {
   padding: .6rem 1.1rem; border-radius: .55rem; font-size: .92rem; font-weight: 600;
-  background: var(--acento); color: #fff;
+  background: var(--acento); color: var(--sobre-acento);
 }
 .btn-principal:hover { background: var(--acento2) }
 .btn-principal:disabled { opacity: .5; cursor: progress }
@@ -79,7 +81,7 @@ a.btn-plano { color: inherit; text-decoration: none }
                    stroke: currentColor; stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round }
 .burbuja {
   position: absolute; top: -.35rem; right: -.35rem; min-width: 1.15rem; height: 1.15rem;
-  padding: 0 .25rem; border-radius: 1rem; background: var(--acento); color: #fff;
+  padding: 0 .25rem; border-radius: 1rem; background: var(--acento); color: var(--sobre-acento);
   font-size: .7rem; font-weight: 700; line-height: 1.15rem; text-align: center;
 }
 .enlace { color: var(--acento); font-weight: 600; padding: 0 }
@@ -218,11 +220,23 @@ main { padding-block: 1.5rem 3rem }
 
 /*  Panel de administración  */
 .marca-sub { color: var(--suave); font-weight: 500; font-size: .85rem }
-.pestanas { display: flex; gap: .25rem; flex-wrap: wrap }
-.pestana { padding: .45rem .8rem; border-radius: .5rem; font-size: .9rem; color: var(--suave) }
+/* Pestañas en su propia barra: no compiten con la marca ni con la sesión. */
+.pestanas { border-top: 1px solid var(--borde) }
+.pestanas-fila { display: flex; gap: 1.5rem; overflow-x: auto; scrollbar-width: none }
+.pestanas-fila::-webkit-scrollbar { display: none }
+.pestana {
+  position: relative; padding: .8rem 0; font-size: .92rem; font-weight: 500;
+  color: var(--suave); white-space: nowrap; transition: color .15s;
+}
 .pestana:hover { color: var(--tinta) }
-.pestana.activa { background: var(--papel); color: var(--tinta); font-weight: 600 }
-.tab { padding-top: .25rem }
+.pestana.activa { color: var(--tinta); font-weight: 600 }
+.pestana::after {
+  content: ""; position: absolute; left: 0; right: 0; bottom: 0; height: 2px;
+  border-radius: 2px; background: var(--acento); transform: scaleX(0); transition: transform .2s;
+}
+.pestana.activa::after { transform: scaleX(1) }
+.pestana:focus-visible { outline: 2px solid var(--acento); outline-offset: -2px; border-radius: .3rem }
+.tab { padding-top: 1.5rem }
 .tarjeta {
   background: var(--carta); border: 1px solid var(--borde); border-radius: var(--radio);
   padding: 1.1rem 1.25rem; margin-bottom: 1rem;
@@ -288,6 +302,3 @@ code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: .
 .linea.agotada { background: color-mix(in srgb, var(--rojo) 8%, transparent); border-radius: .4rem; padding-inline: .5rem }
 .linea.agotada .detalle { color: var(--rojo); font-weight: 600 }
 
-@media (max-width: 46rem) {
-  .pestanas { order: 3; flex-basis: 100% }
-}
