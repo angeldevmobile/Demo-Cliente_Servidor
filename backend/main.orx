@@ -13,6 +13,7 @@ use "backend/importar" as importar
 use "backend/monitor" as monitor
 use "backend/pagos" as pagos
 use "backend/facturas" as facturas
+use "backend/limite" as limite
 use "pasarela/pasarela" as pasarela
 
 fn api_productos(req) {
@@ -136,6 +137,14 @@ fn api_aviso_pago(req) {
 
 fn api_salud(req) {
     return http.salud()
+}
+
+-- Límite de peticiones en las rutas que escriben o cuestan (ver backend/limite.orx).
+fn limitar(req) {
+    if not limite.permite(req["method"], req["path"], http.ip(req)) {
+        return http.json_resp(429, { "error": "demasiadas peticiones; prueba de nuevo en un rato" })
+    }
+    return null
 }
 
 --   Administración: router.guard exige un JWT válido (401) y solo_admin el rol admin (403).
@@ -305,6 +314,7 @@ router.guard(r, "/api/carrito",  config.JWT_SECRETO)
 router.guard(r, "/api/checkout", config.JWT_SECRETO)
 router.guard(r, "/api/pedidos",  config.JWT_SECRETO)
 router.guard(r, "/api/admin",    config.JWT_SECRETO)
+router.use_middleware(r, "limitar")
 router.use_middleware(r, "solo_admin")
 -- Sin una pasarela externa, la simulada se monta en este servidor bajo /pasarela.
 if config.PASARELA_INTEGRADA {

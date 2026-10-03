@@ -11,6 +11,7 @@ use "backend/informes" as informes
 use "backend/facturas" as facturas
 use "backend/monitor" as monitor
 use "backend/pagos" as pagos
+use "backend/limite" as limite
 
 NOMBRE  = entorno.get("ORION_WORKER", "worker-1")
 DESCANSO = entorno.get("ORION_DESCANSO", "500ms")
@@ -56,9 +57,11 @@ latido = tw.clock()
 cobros = tw.clock()
 
 while yes {
-    -- Cada minuto, devuelve a la cola los trabajos de workers detenidos.
+    -- Cada minuto, devuelve a la cola los trabajos de workers detenidos
+    -- y borra los contadores de peticiones ya cerrados.
     if tw.elapsed(rescate) > 60.0 {
         cola.rescatar(5)
+        limite.limpiar()
         rescate = tw.clock()
     }
 

@@ -33,6 +33,9 @@ services:
         sync: false
       - key: ORION_INSTANCIA
         value: render-web
+      # El proxy de Render pone la IP del cliente al principio de esta cabecera.
+      - key: ORION_IP_CABECERA
+        value: x-forwarded-for
       # La pasarela simulada va en el mismo proceso (sin ORION_PASARELA_URL).
       - key: ORION_PASARELA_CLAVE
         generateValue: true

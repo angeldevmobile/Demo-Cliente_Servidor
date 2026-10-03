@@ -32,7 +32,7 @@ transacciones, y es lo que separa un backend de un juguete.
 
 | Qué | Cómo se demuestra |
 |---|---|
-| Un backend se puede partir en módulos | 14 archivos `.orx` que se importan entre sí |
+| Un backend se puede partir en módulos | 17 archivos `.orx` que se importan entre sí |
 | Las contraseñas se guardan bien | `argon2`, nunca la contraseña en claro |
 | Las sesiones son reales | JWT firmado, rutas protegidas con `router.guard` |
 | El dinero no se pierde | Checkout dentro de una transacción, con `ROLLBACK` si falla |
@@ -63,7 +63,8 @@ comercio/
 │   ├── importar.orx     carga masiva del catálogo por COPY
 │   ├── monitor.orx      procesos, cola, carrera y búsqueda medida
 │   ├── pagos.orx        cargo, aviso firmado, caducidad y conciliación
-│   └── facturas.orx     factura en PDF, correo con el adjunto y descarga
+│   ├── facturas.orx     factura en PDF, correo con el adjunto y descarga
+│   └── limite.orx       límite de peticiones por cliente, contado en Postgres
 ├── pasarela/            la pasarela simulada, otro servicio de Orion
 │   ├── pasarela.orx     cargos, página de pago y avisos firmados
 │   ├── main.orx         la pasarela como servidor aparte
@@ -110,6 +111,7 @@ trabajos     id, tipo, datos, estado, intentos, ejecutar_en, tomado_por, …
 facturas     id, pedido_id, numero, contenido, pdf (BYTEA), bytes, enviada, …
 informes     id, formato, desde, hasta, estado, contenido (BYTEA), bytes, …
 procesos     nombre, tipo, version, pid, arranco, senal, rss, pico
+limites      clave, ventana, veces
 pagos_avisos id, evento, cargo_id, pedido_id, resultado, veces, recibido
 ```
 
@@ -157,6 +159,32 @@ Todo lo que cuelga de `/api/carrito`, `/api/checkout`, `/api/pedidos` y
 `/api/admin` va detrás de `router.guard`: sin un JWT válido, `serve` responde
 401 y el handler ni se ejecuta. `/api/admin` pasa además por un middleware que
 exige el rol `admin` en el token (403 si no).
+
+### Límite de peticiones
+
+Las rutas públicas que escriben o cuestan tienen un cupo por IP y, algunas,
+otro entre todos los clientes. Pasado el cupo responden **429**.
+
+| Ruta | Por IP | Entre todos | Ventana |
+|---|---|---|---|
+| `POST /api/registro` | 20 | 300 | 1 hora |
+| `POST /api/login` | 30 | — | 5 minutos |
+| `POST /api/checkout` | 60 | — | 1 minuto |
+| `POST /api/monitor/carrera` | 10 | 60 | 1 minuto |
+| `GET /api/monitor/busqueda` | 30 | 300 | 1 minuto |
+
+**No se usa `middleware.rate_limit` de Orion**, por lo mismo que no se usa su
+módulo `cola`: cuenta en la memoria del proceso, y con tres instancias el cupo
+real sería el triple. Aquí cada petición es una fila en `limites`, sumada con un
+`INSERT ... ON CONFLICT DO UPDATE ... RETURNING veces`: una sola sentencia, así
+que dos instancias que cuentan a la vez no pierden ninguna. El worker borra las
+ventanas viejas.
+
+Detrás de un proxy, la IP de la conexión es la del proxy. `ORION_IP_CABECERA`
+dice en qué cabecera viene la del cliente: `x-real-ip` en el compose (nginx la
+pisa, no se puede falsear) y `x-forwarded-for` en Render. Esa última sí la
+puede falsear el cliente, y para eso está el tope entre todos: aunque alguien
+cambie de IP en cada petición, no pasa de 300 registros por hora.
 
 ## El checkout, que es el corazón
 
@@ -602,6 +630,7 @@ La configuración que no es secreta va por variables normales:
 | `ORION_ADMIN_EMAIL` | `admin@comercio.test` | Cuenta de administración que se crea al arrancar |
 | `ORION_TMP` | `tmp` | Carpeta de archivos de paso (informes a medio generar) |
 | `ORION_INSTANCIA` | `local` | Nombre de la instancia web, el que sale en el monitor |
+| `ORION_IP_CABECERA` | (vacía: IP de la conexión) | Cabecera donde el proxy pone la IP del cliente, para el límite de peticiones |
 | `ORION_WORKER` | `worker-1` | Nombre del worker, el que sale en la cola |
 | `ORION_PASARELA_URL` | (vacía: integrada) | API de la pasarela; vacía, se monta en este proceso bajo `/pasarela` |
 | `ORION_URL_INTERNA` | `http://127.0.0.1:PORT` | Desde donde la pasarela llama al webhook |
@@ -689,3 +718,7 @@ curl -s localhost:8083/api/monitor                        # procesos y cola
 curl -s "localhost:8083/api/monitor/busqueda?q=teclado"   # tiempos y plan
 curl -si localhost:8083/api/monitor | grep X-Orion        # quién atendió
 ```
+
+## Licencia
+
+[MIT](LICENSE), la misma que Orion.

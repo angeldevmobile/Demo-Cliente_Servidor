@@ -1,0 +1,44 @@
+-- Límite de peticiones contado en Postgres: lo comparten todas las instancias.
+use "db" as db
+use "backend/config" as config
+
+-- [método, ruta, máximo por IP, máximo entre todos (0 = sin tope), segundos de la ventana]
+REGLAS = [
+    ["POST", "/api/registro",         20, 300, 3600],
+    ["POST", "/api/login",            30,   0,  300],
+    ["POST", "/api/checkout",         60,   0,   60],
+    ["POST", "/api/monitor/carrera",  10,  60,   60],
+    ["GET",  "/api/monitor/busqueda", 30, 300,   60]
+]
+
+-- Suma una petición a la ventana actual y devuelve cuántas lleva. Es una sola sentencia:
+-- dos instancias que cuentan a la vez no pierden ninguna.
+fn contar(clave, segundos) {
+    s = str(int(segundos))
+    return db.first(config.BD, "
+        INSERT INTO limites (clave, ventana)
+        VALUES (?, to_timestamp(floor(extract(epoch FROM now()) / " + s + ") * " + s + "))
+        ON CONFLICT (clave, ventana) DO UPDATE SET veces = limites.veces + 1
+        RETURNING veces", [clave])["veces"]
+}
+
+-- `no` si esa IP, o todos los clientes juntos, ya agotaron el cupo de la ruta.
+-- El tope global protege aunque alguien falsee su IP en la cabecera.
+fn permite(metodo, ruta, ip) {
+    for regla in REGLAS {
+        if regla[0] == metodo and regla[1] == ruta {
+            if contar(ruta + " " + ip, regla[4]) > regla[2] {
+                return no
+            }
+            if regla[3] > 0 and contar(ruta + " *", regla[4]) > regla[3] {
+                return no
+            }
+        }
+    }
+    return yes
+}
+
+-- Borra las ventanas ya cerradas; lo llama el worker.
+fn limpiar() {
+    db.exec(config.BD, "DELETE FROM limites WHERE ventana < now() - interval '2 hours'")
+}

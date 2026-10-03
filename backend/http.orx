@@ -10,6 +10,16 @@ fn json_resp(status, valor) {
              "headers": { "X-Orion-Instancia": config.INSTANCIA } }
 }
 
+-- IP del cliente. Detrás de un proxy, req["ip"] es la del proxy: la real viene en la
+-- cabecera que indique ORION_IP_CABECERA (si trae varias, la primera).
+fn ip(req) {
+    h = req["headers"]
+    if config.IP_CABECERA != "" and has_key(h, config.IP_CABECERA) {
+        return h[config.IP_CABECERA].split(",")[0].trim()
+    }
+    return req["ip"]
+}
+
 -- Parámetro de la query string, o "" si no viene.
 fn texto(req, clave) {
     if not has_key(req["query"], clave) {

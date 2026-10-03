@@ -20,6 +20,10 @@ FRONTEND = entorno.get("ORION_FRONTEND", "frontend")
 -- Nombre de esta instancia; con varias detrás del balanceador, identifica quién atendió.
 INSTANCIA = entorno.get("ORION_INSTANCIA", "local")
 
+-- Cabecera (en minúsculas) donde el proxy de delante pone la IP del cliente.
+-- Vacía, sin proxy: vale la IP de la conexión.
+IP_CABECERA = entorno.get("ORION_IP_CABECERA", "").lower()
+
 -- Secreto de firma de los JWT: con él se puede firmar un token de cualquier usuario.
 JWT_SECRETO = secret.require("ORION_JWT", { "min_length": 32 })
 JWT_HORAS   = int(entorno.get("ORION_JWT_HORAS", "12"))

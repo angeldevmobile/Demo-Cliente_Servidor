@@ -27,6 +27,8 @@ services:
       ORION_ADMIN_EMAIL: ${ORION_ADMIN_EMAIL:-admin@comercio.test}
       ORION_ADMIN_PASS: ${ORION_ADMIN_PASS:?falta en .env (cp .env.example .env)}
       ORION_INSTANCIA: app1
+      # nginx pone aquí la IP del cliente; sin esto, todos tendrían la del balanceador.
+      ORION_IP_CABECERA: x-real-ip
       # La pasarela es otro servicio; su aviso llega a la tienda por el balanceador.
       ORION_PASARELA_URL: http://pasarela:8090/pasarela
       ORION_URL_INTERNA: http://balanceador
