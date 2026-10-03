@@ -2,9 +2,9 @@
 # Ubuntu 24.04 porque el binario publicado requiere GLIBC 2.39.
 FROM ubuntu:24.04
 
-# Versión mínima 0.1.8: la pasarela registra sus rutas con funciones de su módulo
-# y usa los timeouts de net.
-ARG ORION_VERSION=v0.1.8
+# Versión mínima 0.1.9: los secretos se leen con el módulo `secret`,
+# que los oculta en la salida y los exige en producción.
+ARG ORION_VERSION=v0.1.9
 
 RUN apt-get update \
  && apt-get install -y --no-install-recommends ca-certificates curl \

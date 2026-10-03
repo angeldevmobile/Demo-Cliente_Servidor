@@ -5,7 +5,9 @@ set -euo pipefail
 
 N="${1:-30}"
 ORION="${ORION:-orion}"
-export ORION_BD="${ORION_BD:-postgres://comercio:comercio@127.0.0.1:5433/comercio}"
+# Los secretos (ORION_BD, ORION_JWT…) vienen de .env, igual que para la tienda.
+[ -f .env ] && { set -a; . ./.env; set +a; }
+: "${ORION_BD:?falta ORION_BD: cp .env.example .env}"
 
 sql() { docker exec comercio-db psql -U comercio -d comercio -tAc "$1" | tr -d '[:space:]'; }
 

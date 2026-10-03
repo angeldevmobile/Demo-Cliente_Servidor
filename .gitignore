@@ -6,3 +6,8 @@ datos/catalogo-grande.csv
 catalogo-*.csv
 
 *.log
+
+# Secretos: solo .env.example se sube.
+.env
+.env.*
+!.env.example

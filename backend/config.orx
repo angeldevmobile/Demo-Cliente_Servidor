@@ -1,23 +1,32 @@
--- Configuración leída de variables de entorno.
+-- Configuración: los secretos con `secret` (sin valores por defecto), el resto con `env`.
 use "env" as entorno
+use "secret" as secret
+
+-- En desarrollo, los secretos salen de .env (no se sube a git). En producción, del entorno.
+if not secret.production() {
+    secret.load()
+}
+
+-- Comprueba todos los secretos a la vez: si faltan varios, el error los lista juntos.
+secret.require(["ORION_BD", "ORION_JWT", "ORION_ADMIN_PASS", "ORION_PASARELA_CLAVE", "ORION_PASARELA_SECRETO"])
 
 PORT = int(entorno.get("PORT", "8083"))
 
--- Por defecto, el Postgres del docker-compose (puerto 5433).
-BD = entorno.get("ORION_BD", "postgres://comercio:comercio@127.0.0.1:5433/comercio")
+-- Lleva la contraseña de la base, así que es un secreto.
+BD = secret.require("ORION_BD")
 
 FRONTEND = entorno.get("ORION_FRONTEND", "frontend")
 
 -- Nombre de esta instancia; con varias detrás del balanceador, identifica quién atendió.
 INSTANCIA = entorno.get("ORION_INSTANCIA", "local")
 
--- Secreto de firma de los JWT. En producción debe venir del entorno.
-JWT_SECRETO = entorno.get("ORION_JWT", "cambia-esto-en-produccion")
+-- Secreto de firma de los JWT: con él se puede firmar un token de cualquier usuario.
+JWT_SECRETO = secret.require("ORION_JWT", { "min_length": 32 })
 JWT_HORAS   = int(entorno.get("ORION_JWT_HORAS", "12"))
 
 -- Cuenta de administración que se crea al arrancar. El registro público siempre da rol `cliente`.
 ADMIN_EMAIL = entorno.get("ORION_ADMIN_EMAIL", "admin@comercio.test")
-ADMIN_PASS  = entorno.get("ORION_ADMIN_PASS", "admin-de-juguete")
+ADMIN_PASS  = secret.require("ORION_ADMIN_PASS", { "min_length": 12 })
 
 -- Carpeta para archivos temporales (informes y facturas). Lo importante está en Postgres.
 TMP = entorno.get("ORION_TMP", "tmp")
@@ -32,8 +41,8 @@ PASARELA_INTEGRADA = entorno.get("ORION_PASARELA_URL", "") == ""
 
 -- Clave de la tienda ante la pasarela y secreto de firma de los avisos.
 -- Deben coincidir en ambos servicios.
-PASARELA_CLAVE   = entorno.get("ORION_PASARELA_CLAVE", "clave-de-desarrollo")
-PASARELA_SECRETO = entorno.get("ORION_PASARELA_SECRETO", "secreto-de-desarrollo")
+PASARELA_CLAVE   = secret.require("ORION_PASARELA_CLAVE", { "min_length": 16 })
+PASARELA_SECRETO = secret.require("ORION_PASARELA_SECRETO", { "min_length": 32 })
 
 -- Minutos que se reserva el stock de un pedido sin pagar.
 PAGO_MINUTOS = int(entorno.get("ORION_PAGO_MINUTOS", "15"))
@@ -44,7 +53,11 @@ SMTP = {
     "puerto":    int(entorno.get("ORION_SMTP_PUERTO", "587")),
     "seguridad": entorno.get("ORION_SMTP_SEGURIDAD", "starttls"),
     "usuario":   entorno.get("ORION_SMTP_USUARIO", ""),
-    "clave":     entorno.get("ORION_SMTP_CLAVE", "")
+    "clave":     ""
+}
+-- La clave SMTP es opcional (un buzón de pruebas no la pide), pero si está es un secreto.
+if secret.has("ORION_SMTP_CLAVE") {
+    SMTP["clave"] = secret.get("ORION_SMTP_CLAVE")
 }
 CORREO_DE = entorno.get("ORION_CORREO_DE", "Comercio <tienda@comercio.test>")
 

@@ -1,0 +1,6 @@
+# Los secretos no entran en la imagen: llegan por variables de entorno.
+.env
+.env.*
+.git
+tmp/
+*.log

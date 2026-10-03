@@ -15,7 +15,8 @@ una operación que no puede salir a medias.
 > productos, despliegue con balanceador y tres instancias, cola de trabajos en
 > Postgres con workers aparte, y una página que enseña todo eso en vivo.
 >
-> **Necesita Orion 0.1.8 o posterior**: la pasarela monta sus propias rutas
+> **Necesita Orion 0.1.9 o posterior** (los secretos van con el módulo `secret`).
+> Desde la 0.1.8: la pasarela monta sus propias rutas
 > pasando funciones de su módulo y usa los timeouts de `net`, y la factura
 > sale con `mail.send` y su PDF adjunto. Construirla destapó varios fallos del
 > lenguaje (`and`/`or` sin cortocircuito, `attempt` que no capturaba dentro de
@@ -344,8 +345,8 @@ un solo proceso web, todo lo atiende `local`.
 
 `/admin.html`, solo para cuentas con rol `admin`. Registrarse siempre da rol
 `cliente`: el administrador se siembra al arrancar con `ORION_ADMIN_EMAIL` y
-`ORION_ADMIN_PASS` (por defecto `admin@comercio.test` / `admin-de-juguete`). Si
-alguien se registró antes con ese email, no se le asciende.
+`ORION_ADMIN_PASS`, que vienen de `.env` (ver "Secretos"). Si alguien se
+registró antes con ese email, no se le asciende.
 
 Lo que hace:
 
@@ -538,7 +539,11 @@ Reparto:
 ## Ejecutar
 
 La demo trae su propio PostgreSQL, en el **puerto 5433** para no chocar con
-uno que ya tengas instalado:
+uno que ya tengas instalado. Antes de nada, crea tu `.env` con los secretos:
+
+```bash
+cp .env.example .env      # y cambia los valores
+```
 
 **Todo el sistema** (Postgres, tres instancias, dos workers y el balanceador):
 
@@ -564,45 +569,57 @@ orion run   backend/worker.orx    # en otra terminal: facturas e informes
 El esquema y el catálogo de siembra se crean solos al arrancar, y solo la
 primera vez: reiniciar no duplica nada.
 
-Para apuntar a otra base, la única variable que hace falta:
+## Secretos
 
-```bash
-ORION_BD="postgres://usuario:clave@host:5432/base" orion watch backend/main.orx
-```
+Ninguna clave está escrita en el código ni en el compose. La tienda los lee con
+el módulo `secret` de Orion, que:
+
+- los busca en el entorno, en `NOMBRE_FILE` (secretos de Docker o Kubernetes) o,
+  solo en desarrollo, en `.env`, que no se sube a git (`.env.example` es la plantilla);
+- comprueba todos al arrancar y lista juntos los que faltan o son demasiado cortos;
+- los muestra como `***` en `show`, logs, errores y en el log de `serve`.
+
+Con `ORION_ENV=production` (como en Render) no se lee ningún `.env` ni se acepta
+un valor por defecto: si falta un secreto, el servidor no arranca.
+
+| Secreto | Para qué |
+|---|---|
+| `ORION_BD` | Cadena de conexión a Postgres (lleva la contraseña) |
+| `ORION_JWT` | Firma de los tokens; 32 caracteres o más |
+| `ORION_ADMIN_PASS` | Contraseña del administrador; 12 o más |
+| `ORION_PASARELA_CLAVE` | Clave de la tienda ante la pasarela; 16 o más |
+| `ORION_PASARELA_SECRETO` | Firma de los avisos de la pasarela; 32 o más |
+| `ORION_SMTP_CLAVE` | Contraseña SMTP, si el servidor la pide |
+| `POSTGRES_PASSWORD` | Contraseña del Postgres del compose |
+
+La configuración que no es secreta va por variables normales:
 
 | Variable | Por defecto | Para qué |
 |---|---|---|
+| `ORION_ENV` | (vacía: desarrollo) | `production` exige todos los secretos del entorno |
 | `PORT` | `8083` | Puerto de escucha |
-| `ORION_BD` | el Postgres del compose | Cadena de conexión |
 | `ORION_FRONTEND` | `frontend` | Carpeta de estáticos |
-| `ORION_JWT` | valor de desarrollo | Secreto de firma de los tokens |
-| `ORION_ADMIN_EMAIL` | `admin@comercio.test` | Cuenta de administración que se siembra al arrancar |
-| `ORION_ADMIN_PASS` | `admin-de-juguete` | Su contraseña |
+| `ORION_ADMIN_EMAIL` | `admin@comercio.test` | Cuenta de administración que se crea al arrancar |
 | `ORION_TMP` | `tmp` | Carpeta de archivos de paso (informes a medio generar) |
 | `ORION_INSTANCIA` | `local` | Nombre de la instancia web, el que sale en el monitor |
 | `ORION_WORKER` | `worker-1` | Nombre del worker, el que sale en la cola |
 | `ORION_PASARELA_URL` | (vacía: integrada) | API de la pasarela; vacía, se monta en este proceso bajo `/pasarela` |
 | `ORION_URL_INTERNA` | `http://127.0.0.1:PORT` | Desde donde la pasarela llama al webhook |
-| `ORION_PASARELA_CLAVE` | valor de desarrollo | Clave de la tienda ante la pasarela (igual en los dos lados) |
-| `ORION_PASARELA_SECRETO` | valor de desarrollo | Secreto con el que se firman los avisos (igual en los dos lados) |
 | `ORION_PAGO_MINUTOS` | `15` | Cuánto se reserva el stock de un pedido sin pagar |
 | `ORION_SMTP_HOST` | (vacía: sin correo) | Servidor SMTP para mandar las facturas |
 | `ORION_SMTP_PUERTO` | `587` | Su puerto |
 | `ORION_SMTP_SEGURIDAD` | `starttls` | `tls`, `starttls` o `ninguna` |
-| `ORION_SMTP_USUARIO` / `ORION_SMTP_CLAVE` | (vacías) | Credenciales, si el servidor las pide |
+| `ORION_SMTP_USUARIO` | (vacía) | Usuario SMTP, si el servidor lo pide |
 | `ORION_CORREO_DE` | `Comercio <tienda@comercio.test>` | Remitente de las facturas |
 | `ORION_COLOR_MARCA` | `#1f6f4a` | Color de las facturas y los informes |
-
-Las credenciales del `docker-compose.yml` son de juguete y están a la vista a
-propósito: la base vive en un contenedor local y no guarda nada real.
 
 ## Desplegar en Render
 
 El repositorio trae un `render.yaml`: en Render, **New → Blueprint** y se elige
 este repositorio. Crea una base Postgres y la web, con las variables ya
-enlazadas, y solo pide dos: `ORION_ADMIN_EMAIL` y `ORION_ADMIN_PASS`. **La
-contraseña tiene que ser nueva**: la de juguete está publicada en este README,
-y el administrador se siembra en el primer arranque.
+enlazadas, y solo pide dos: `ORION_ADMIN_EMAIL` y `ORION_ADMIN_PASS`. Corre con
+`ORION_ENV=production`: los demás secretos los genera Render, y si falta alguno
+el servicio no arranca.
 
 En el plan gratuito el worker corre en el mismo contenedor que la web, porque
 Render no da workers gratis. Funciona porque la cola y los informes viven en

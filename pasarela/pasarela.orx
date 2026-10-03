@@ -7,15 +7,24 @@ use "crypto" as crypto
 use "regex" as regex
 use "router" as router
 use "env" as entorno
+use "secret" as secret
 use "timewarp" as tw
 
-BD      = entorno.get("PASARELA_BD", entorno.get("ORION_BD", "postgres://comercio:comercio@127.0.0.1:5433/comercio"))
+if not secret.production() {
+    secret.load()
+}
+
+-- La base de la pasarela; por defecto, la misma que la tienda.
+BD = secret.get("PASARELA_BD")
+if BD == null {
+    BD = secret.require("ORION_BD")
+}
 PREFIJO = entorno.get("PASARELA_PREFIJO", "/pasarela")
 PAGINA  = entorno.get("PASARELA_PAGINA", "pasarela/pagar.html")
 
 -- Clave de la tienda y secreto de firma de los avisos.
-CLAVE   = entorno.get("ORION_PASARELA_CLAVE", "clave-de-desarrollo")
-SECRETO = entorno.get("ORION_PASARELA_SECRETO", "secreto-de-desarrollo")
+CLAVE   = secret.require("ORION_PASARELA_CLAVE", { "min_length": 16 })
+SECRETO = secret.require("ORION_PASARELA_SECRETO", { "min_length": 32 })
 
 -- Veces que se envía cada aviso. Se envía dos veces para comprobar que la tienda no lo duplica.
 ENVIOS = int(entorno.get("PASARELA_ENVIOS", "2"))

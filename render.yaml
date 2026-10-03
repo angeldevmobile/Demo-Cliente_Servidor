@@ -16,6 +16,9 @@ services:
     # Render no interpreta comillas en dockerCommand: el arranque va en un script.
     dockerCommand: sh despliegue/arranque.sh
     envVars:
+      # Producción: los secretos son obligatorios, sin valores por defecto ni .env.
+      - key: ORION_ENV
+        value: production
       # URL interna de la base: no sale de la red de Render, va sin TLS.
       - key: ORION_BD
         fromDatabase:

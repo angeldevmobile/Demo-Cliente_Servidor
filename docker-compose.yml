@@ -1,5 +1,5 @@
 # Sistema completo: `docker compose up -d --build` → http://localhost:8086
-# Postgres usa el puerto 5433 para no chocar con uno local. Credenciales solo para pruebas.
+# Postgres usa el puerto 5433. Los secretos vienen de .env (cp .env.example .env).
 
 services:
   postgres:
@@ -7,7 +7,7 @@ services:
     container_name: comercio-db
     environment:
       POSTGRES_USER: comercio
-      POSTGRES_PASSWORD: comercio
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?falta en .env (cp .env.example .env)}
       POSTGRES_DB: comercio
     ports:
       - "5433:5432"
@@ -22,14 +22,16 @@ services:
   app1:
     build: .
     environment: &entorno
-      ORION_BD: postgres://comercio:comercio@postgres:5432/comercio
-      ORION_JWT: secreto-compartido-entre-instancias
+      ORION_BD: postgres://comercio:${POSTGRES_PASSWORD}@postgres:5432/comercio
+      ORION_JWT: ${ORION_JWT:?falta en .env (cp .env.example .env)}
+      ORION_ADMIN_EMAIL: ${ORION_ADMIN_EMAIL:-admin@comercio.test}
+      ORION_ADMIN_PASS: ${ORION_ADMIN_PASS:?falta en .env (cp .env.example .env)}
       ORION_INSTANCIA: app1
       # La pasarela es otro servicio; su aviso llega a la tienda por el balanceador.
       ORION_PASARELA_URL: http://pasarela:8090/pasarela
       ORION_URL_INTERNA: http://balanceador
-      ORION_PASARELA_CLAVE: clave-de-juguete
-      ORION_PASARELA_SECRETO: secreto-de-juguete
+      ORION_PASARELA_CLAVE: ${ORION_PASARELA_CLAVE:?falta en .env (cp .env.example .env)}
+      ORION_PASARELA_SECRETO: ${ORION_PASARELA_SECRETO:?falta en .env (cp .env.example .env)}
       # Las facturas se envían al buzón de pruebas (http://localhost:8025).
       ORION_SMTP_HOST: correo
       ORION_SMTP_PUERTO: "1025"
@@ -90,9 +92,9 @@ services:
     build: .
     command: ["orion", "--run", "pasarela/main.orx"]
     environment:
-      ORION_BD: postgres://comercio:comercio@postgres:5432/comercio
-      ORION_PASARELA_CLAVE: clave-de-juguete
-      ORION_PASARELA_SECRETO: secreto-de-juguete
+      ORION_BD: postgres://comercio:${POSTGRES_PASSWORD}@postgres:5432/comercio
+      ORION_PASARELA_CLAVE: ${ORION_PASARELA_CLAVE:?falta en .env (cp .env.example .env)}
+      ORION_PASARELA_SECRETO: ${ORION_PASARELA_SECRETO:?falta en .env (cp .env.example .env)}
       PORT: "8090"
     depends_on:
       postgres:
