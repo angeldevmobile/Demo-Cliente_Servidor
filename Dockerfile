@@ -24,6 +24,7 @@ COPY backend/  backend/
 COPY frontend/ frontend/
 COPY datos/    datos/
 COPY herramientas/ herramientas/
+COPY despliegue/arranque.sh despliegue/arranque.sh
 
 ENV PORT=8083
 EXPOSE 8083

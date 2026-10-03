@@ -16,7 +16,8 @@ services:
     runtime: docker
     plan: free
     healthCheckPath: /health
-    dockerCommand: sh -c "orion run backend/worker.orx & exec orion run backend/main.orx"
+    # Render no interpreta comillas en dockerCommand: el arranque va en un script.
+    dockerCommand: sh despliegue/arranque.sh
     envVars:
       # URL interna: no sale de la red de Render, así que va sin TLS.
       - key: ORION_BD
