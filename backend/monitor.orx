@@ -1,0 +1,184 @@
+-- Monitor: los procesos vivos, la cola en marcha, la carrera por la última
+-- unidad y la búsqueda medida. Es lo que enseña /monitor.html.
+use "db" as db
+use "auth" as auth
+use "crypto" as crypto
+use "regex" as regex
+use "process" as proceso
+use "backend/config" as config
+use "backend/cola" as cola
+use "backend/cuentas" as cuentas
+use "backend/carrito" as carrito
+use "backend/catalogo" as catalogo
+
+SKU_CARRERA = "CARRERA-1"
+MAX_COMPRADORES = 6
+
+--   Procesos
+
+-- Cada proceso anota su versión de Orion, su PID y su memoria. Las instancias
+-- web lo hacen al atender esta página; los workers, en su bucle.
+fn latido(nombre, tipo) {
+    m = proceso.memory()
+    rss = 0
+    pico = 0
+    if m != null {
+        rss = m["rss"]
+        pico = m["peak"]
+    }
+    db.exec(config.BD, "INSERT INTO procesos (nombre, tipo, version, pid, arranco, senal, rss, pico)
+                        VALUES (?, ?, ?, ?, now() - (? || ' seconds')::interval, now(), ?, ?)
+                        ON CONFLICT (nombre) DO UPDATE SET
+                            tipo = EXCLUDED.tipo, version = EXCLUDED.version, pid = EXCLUDED.pid,
+                            arranco = EXCLUDED.arranco, senal = now(),
+                            rss = EXCLUDED.rss, pico = EXCLUDED.pico",
+            [nombre, tipo, proceso.version(), proceso.pid(), str(proceso.uptime()), rss, pico])
+}
+
+fn procesos() {
+    return db.query(config.BD, "
+        SELECT nombre, tipo, version, pid, rss, pico,
+               EXTRACT(EPOCH FROM now() - arranco)::float8 AS vivo_s,
+               EXTRACT(EPOCH FROM now() - senal)::float8   AS sin_senal_s
+        FROM procesos
+        WHERE senal > now() - interval '1 hour'
+        ORDER BY tipo = 'worker', nombre")
+}
+
+--   Cola
+
+fn trabajos() {
+    return db.query(config.BD, "
+        SELECT id, tipo, estado, intentos, tomado_por, error,
+               (EXTRACT(EPOCH FROM tomado_en - creado) * 1000)::float8 AS espera_ms,
+               (EXTRACT(EPOCH FROM terminado - tomado_en) * 1000)::float8 AS duracion_ms,
+               EXTRACT(EPOCH FROM now() - creado)::float8 AS hace_s
+        FROM trabajos ORDER BY id DESC LIMIT 12")
+}
+
+-- Quién hizo cuánto: el reparto entre workers sale de la propia cola.
+fn por_worker() {
+    return db.query(config.BD, "
+        SELECT tomado_por AS worker, COUNT(*)::int AS hechos,
+               (AVG(EXTRACT(EPOCH FROM terminado - tomado_en)) * 1000)::float8 AS ms_medio
+        FROM trabajos
+        WHERE estado = 'hecho' AND tomado_por IS NOT NULL
+        GROUP BY tomado_por ORDER BY tomado_por")
+}
+
+fn estado(instancia) {
+    latido(instancia, "web")
+    return {
+        "atendido_por": instancia,
+        "procesos": procesos(),
+        "cola": cola.estadisticas(),
+        "trabajos": trabajos(),
+        "por_worker": por_worker()
+    }
+}
+
+--   La carrera: N compradores, una unidad
+
+-- Deja el producto con stock 1 y a cada comprador con esa unidad en el
+-- carrito. Las compras las lanza el navegador a la vez, a través del
+-- balanceador, así que llegan a instancias distintas.
+fn preparar_carrera(compradores) {
+    n = compradores
+    if n < 2 {
+        n = 2
+    }
+    if n > MAX_COMPRADORES {
+        n = MAX_COMPRADORES
+    }
+
+    -- Inactivo y a 0 €: no sale en la tienda ni cambia las ventas.
+    pid = db.insert(config.BD, "
+        INSERT INTO productos (sku, nombre, descripcion, categoria, precio, stock, activo)
+        VALUES (?, 'La última unidad', 'Producto de la carrera de /monitor.html', 'monitor', 0, 1, false)
+        ON CONFLICT (sku) DO UPDATE SET stock = 1, descripcion = EXCLUDED.descripcion, categoria = EXCLUDED.categoria
+        RETURNING id", [SKU_CARRERA])
+
+    -- Fuera la carrera anterior: su pedido y su factura pendiente, si la hay.
+    anteriores = "SELECT pedido_id FROM pedido_items WHERE producto_id = ?"
+    db.exec(config.BD, "DELETE FROM trabajos
+                        WHERE tipo = 'factura' AND estado = 'pendiente'
+                          AND (datos::json->>'pedido_id')::int IN (" + anteriores + ")", [pid])
+    db.exec(config.BD, "DELETE FROM pedidos WHERE id IN (" + anteriores + ")", [pid])
+
+    fuera = []
+    for i in range(n) {
+        u = comprador(i + 1)
+        cid = carrito.carrito_de(u["id"])
+        db.exec(config.BD, "DELETE FROM lineas WHERE carrito_id = ?", [cid])
+        db.exec(config.BD, "INSERT INTO lineas (carrito_id, producto_id, cantidad) VALUES (?, ?, 1)", [cid, pid])
+        fuera.push({ "nombre": u["nombre"], "token": cuentas.emitir_token(u) })
+    }
+    return { "stock": 1, "compradores": fuera }
+}
+
+-- Cuentas de la carrera. Su contraseña es un uuid que nadie conoce: solo se
+-- usan con el token que devuelve preparar_carrera.
+fn comprador(n) {
+    email = "comprador-" + str(n) + "@carrera.test"
+    sql = "SELECT id, email, nombre, rol FROM usuarios WHERE email = ?"
+    u = db.first(config.BD, sql, [email])
+    if u != null {
+        return u
+    }
+    db.exec(config.BD, "INSERT INTO usuarios (email, hash_pass, nombre) VALUES (?, ?, ?)
+                        ON CONFLICT (email) DO NOTHING",
+            [email, auth.hash(crypto.uuid()), "Comprador " + str(n)])
+    return db.first(config.BD, sql, [email])
+}
+
+fn resultado_carrera() {
+    return db.first(config.BD, "
+        SELECT p.stock,
+               (SELECT COALESCE(SUM(i.cantidad), 0)::int FROM pedido_items i
+                WHERE i.producto_id = p.id) AS vendidas
+        FROM productos p WHERE p.sku = ?", [SKU_CARRERA])
+}
+
+--   Búsqueda medida
+
+-- La consulta real de la tienda frente a ILIKE, con el tiempo que da
+-- EXPLAIN ANALYZE y los nodos del plan: se ve si usa el índice o no.
+fn medir_busqueda(termino) {
+    t = termino.trim()
+    if t == "" {
+        t = "auriculares"
+    }
+    if len(t) > 60 {
+        return { "ok": no, "error": "la búsqueda es demasiado larga" }
+    }
+    tienda = catalogo.consulta(t, "", 60)
+    patron = "%" + t + "%"
+    ilike = "SELECT id, sku, nombre, descripcion, categoria, precio, stock FROM productos
+             WHERE activo = true AND (nombre ILIKE ? OR descripcion ILIKE ? OR sku ILIKE ?)
+             ORDER BY categoria, nombre LIMIT 60"
+    f = catalogo.filtro_busqueda(t)
+    return {
+        "ok": yes,
+        "termino": t,
+        "productos": db.first(config.BD, "SELECT COUNT(*)::int AS n FROM productos WHERE activo")["n"],
+        "coinciden": db.first(config.BD, "SELECT COUNT(*)::int AS n FROM productos WHERE activo AND " + f[0], f[1])["n"],
+        "texto_completo": analizar(tienda[0], tienda[1]),
+        "ilike": analizar(ilike, [patron, patron, patron])
+    }
+}
+
+fn analizar(sql, params) {
+    ms = 0.0
+    nodos = []
+    for fila in db.query(config.BD, "EXPLAIN (ANALYZE) " + sql, params) {
+        linea = fila["QUERY PLAN"]
+        if linea.contains("Execution Time") {
+            ms = float(regex.find(linea, "[0-9]+\\.[0-9]+"))
+        }
+        nodo = regex.find(linea, "(Bitmap Index Scan|Bitmap Heap Scan|Index Only Scan|Index Scan|Seq Scan) on [a-z_]+")
+        if nodo != null and not nodos.contains(nodo) {
+            nodos.push(nodo)
+        }
+    }
+    return { "ms": ms, "plan": nodos }
+}

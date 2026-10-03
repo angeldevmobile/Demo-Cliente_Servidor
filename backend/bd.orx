@@ -121,6 +121,19 @@ fn crear_esquema() {
         terminado  TIMESTAMPTZ,
         CHECK (hasta >= desde)
     )")
+
+    -- Una fila por proceso (instancia web o worker), con su última señal de
+    -- vida: es lo que enseña /monitor.html.
+    db.exec(config.BD, "CREATE TABLE IF NOT EXISTS procesos (
+        nombre  TEXT PRIMARY KEY,
+        tipo    TEXT NOT NULL,
+        version TEXT NOT NULL,
+        pid     BIGINT NOT NULL,
+        arranco TIMESTAMPTZ NOT NULL,
+        senal   TIMESTAMPTZ NOT NULL,
+        rss     BIGINT NOT NULL DEFAULT 0,
+        pico    BIGINT NOT NULL DEFAULT 0
+    )")
 }
 
 -- La cuenta de administración. Si alguien se registró antes con ese email,

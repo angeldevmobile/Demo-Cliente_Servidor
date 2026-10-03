@@ -10,6 +10,7 @@ use "backend/pedidos" as pedidos
 use "backend/admin" as admin
 use "backend/informes" as informes
 use "backend/importar" as importar
+use "backend/monitor" as monitor
 
 fn api_productos(req) {
     return http.json_resp(200, catalogo.listar(http.texto(req, "q"), http.texto(req, "cat"), http.entero(req, "limite", 0)))
@@ -196,11 +197,36 @@ fn api_admin_importar(req) {
     return http.json_resp(200, r["resultado"])
 }
 
+--   Monitor: público a propósito. No enseña datos de nadie, solo procesos,
+--   cola y tiempos.
+
+fn api_monitor(req) {
+    return http.json_resp(200, monitor.estado(config.INSTANCIA))
+}
+
+fn api_carrera(req) {
+    n = http.campo_entero(http.cuerpo(req), "compradores", 6)
+    return http.json_resp(200, monitor.preparar_carrera(n))
+}
+
+fn api_carrera_resultado(req) {
+    return http.json_resp(200, monitor.resultado_carrera())
+}
+
+fn api_medir_busqueda(req) {
+    r = monitor.medir_busqueda(http.texto(req, "q"))
+    if not r["ok"] {
+        return http.json_resp(400, { "error": r["error"] })
+    }
+    return http.json_resp(200, r)
+}
+
 fn no_encontrado(req) {
     return http.json_resp(404, { "error": "ruta no encontrada", "path": req["path"] })
 }
 
 puestos = bd.preparar("datos/catalogo.csv")
+monitor.latido(config.INSTANCIA, "web")
 
 r = router.new()
 router.get(r, "/api/productos",      "api_productos")
@@ -227,6 +253,11 @@ router.get(r,  "/api/admin/informes",             "api_admin_informes")
 router.post(r, "/api/admin/informes",             "api_admin_pedir_informe")
 router.get(r,  "/api/admin/informes/:id",         "api_admin_descargar")
 router.post(r, "/api/admin/importar",             "api_admin_importar")
+
+router.get(r,  "/api/monitor",                    "api_monitor")
+router.post(r, "/api/monitor/carrera",            "api_carrera")
+router.get(r,  "/api/monitor/carrera",            "api_carrera_resultado")
+router.get(r,  "/api/monitor/busqueda",           "api_medir_busqueda")
 
 -- Todo lo que cuelgue de /api/yo exige un JWT válido: sin él, serve responde
 -- 401 y el handler ni se ejecuta.

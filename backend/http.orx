@@ -4,8 +4,11 @@ use "backend/config" as config
 use "backend/catalogo" as catalogo
 use "backend/cola" as cola
 
+-- X-Orion-Instancia: qué proceso atendió la petición. Con el balanceador
+-- delante, es lo que deja ver el reparto desde el navegador.
 fn json_resp(status, valor) {
-    return { "status": status, "body": json.forge(valor), "content_type": "application/json" }
+    return { "status": status, "body": json.forge(valor), "content_type": "application/json",
+             "headers": { "X-Orion-Instancia": config.INSTANCIA } }
 }
 
 -- Parámetro de la query string, o "" si no viene.

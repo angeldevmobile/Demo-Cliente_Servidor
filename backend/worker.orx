@@ -8,6 +8,7 @@ use "backend/config" as config
 use "backend/bd" as bd
 use "backend/cola" as cola
 use "backend/informes" as informes
+use "backend/monitor" as monitor
 
 NOMBRE  = entorno.get("ORION_WORKER", "worker-1")
 DESCANSO = entorno.get("ORION_DESCANSO", "500ms")
@@ -84,6 +85,8 @@ show ""
 
 hechos = 0
 rescate = tw.clock()
+monitor.latido(NOMBRE, "worker")
+latido = tw.clock()
 
 while yes {
     -- De vez en cuando, devolver a la cola lo que quedó atascado en un worker
@@ -91,6 +94,13 @@ while yes {
     if tw.elapsed(rescate) > 60.0 {
         cola.rescatar(5)
         rescate = tw.clock()
+    }
+
+    -- Señal de vida cada 5 s, no en cada vuelta: con la cola vacía el bucle
+    -- da dos vueltas por segundo.
+    if tw.elapsed(latido) > 5.0 {
+        monitor.latido(NOMBRE, "worker")
+        latido = tw.clock()
     }
 
     t = cola.tomar(NOMBRE)

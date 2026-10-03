@@ -8,12 +8,14 @@ la pregunta que viene después: **"¿aguanta un proyecto de verdad?"**. Backend
 repartido en varios archivos, autenticación con contraseñas, dinero, stock, y
 una operación que no puede salir a medias.
 
-> **Estado: las siete fases terminadas.** Catálogo, cuentas con JWT, compra
+> **Estado: ocho fases terminadas.** Catálogo, cuentas con JWT, compra
 > transaccional, panel de administración con informes en Excel y PDF, carga
 > masiva de un millón de productos, despliegue con balanceador y tres
-> instancias, y cola de trabajos en Postgres con workers aparte.
+> instancias, cola de trabajos en Postgres con workers aparte, y una página
+> que enseña todo eso funcionando en vivo.
 >
-> **Necesita Orion 0.1.6 o posterior.** Construirla destapó varios fallos del
+> **Necesita Orion 0.1.7 o posterior** (`process.version`, `process.memory`
+> y `process.uptime`, que usa la fase 8). Construirla destapó varios fallos del
 > lenguaje (`and`/`or` sin cortocircuito, `attempt` que no capturaba dentro de
 > `serve`, errores de Postgres sin mensaje…), que se corrigieron en Orion y no
 > con rodeos aquí. Ver el CHANGELOG de Orion.
@@ -27,7 +29,7 @@ transacciones, y es lo que separa un backend de un juguete.
 
 | Qué | Cómo se demuestra |
 |---|---|
-| Un backend se puede partir en módulos | 13 archivos `.orx` que se importan entre sí |
+| Un backend se puede partir en módulos | 14 archivos `.orx` que se importan entre sí |
 | Las contraseñas se guardan bien | `argon2`, nunca la contraseña en claro |
 | Las sesiones son reales | JWT firmado, rutas protegidas con `router.guard` |
 | El dinero no se pierde | Checkout dentro de una transacción, con `ROLLBACK` si falla |
@@ -52,12 +54,15 @@ comercio/
 │   ├── worker.orx       proceso aparte que consume la cola
 │   ├── admin.orx        productos, stock, pedidos y petición de informes
 │   ├── informes.orx     informes de ventas en Excel y PDF
-│   └── importar.orx     carga masiva del catálogo por COPY
+│   ├── importar.orx     carga masiva del catálogo por COPY
+│   └── monitor.orx   procesos, cola, carrera y búsqueda medida
 ├── frontend/
 │   ├── index.html       tienda y carrito
 │   ├── admin.html       panel de administración
 │   ├── app.js
 │   ├── admin.js
+│   ├── monitor.html  Orion funcionando, en vivo
+│   ├── monitor.js
 │   └── estilos.css
 ├── herramientas/
 │   ├── generar-catalogo.orx   catálogo de prueba del tamaño que se pida
@@ -123,6 +128,10 @@ leerlo, pero las sumas de dinero las hace Postgres.
 | `GET` | `/api/admin/informes` | Informes pedidos y su estado |
 | `GET` | `/api/admin/informes/:id` | Descarga un informe listo |
 | `POST` | `/api/admin/importar` | Carga masiva desde un CSV (hasta 50 MB) |
+| `GET` | `/api/monitor` | Procesos vivos, estado de la cola y últimos trabajos |
+| `POST` | `/api/monitor/carrera` | Prepara la carrera: stock 1 y N compradores con él en el carrito |
+| `GET` | `/api/monitor/carrera` | Stock final y unidades vendidas |
+| `GET` | `/api/monitor/busqueda` | Texto completo frente a ILIKE, con `EXPLAIN ANALYZE` |
 
 Todo lo que cuelga de `/api/carrito`, `/api/checkout`, `/api/pedidos` y
 `/api/admin` va detrás de `router.guard`: sin un JWT válido, `serve` responde
@@ -212,10 +221,34 @@ Las otras demos usan SQLite y les sobra. Aquí hace falta lo que SQLite no da:
 7. ✅ **Cola de trabajos**: tabla en Postgres con reclamación atómica, workers
    como procesos aparte, y la factura encolada dentro de la transacción de la
    compra.
+8. ✅ **Monitor**: `/monitor.html` enseña en vivo los procesos, la cola,
+   la carrera por la última unidad y la búsqueda medida.
 
 Mientras una fase no esté, sus controles no aparecen en la página: es
 preferible a enseñar botones que devuelven 404. El interruptor está arriba de
 `frontend/app.js`.
+
+## Monitor
+
+`/monitor.html`, pública. Esta demo no vende nada de verdad: lo que tiene
+que enseñar es qué hace Orion por detrás, y aquí se ve sin leer logs.
+
+- **Procesos.** Cada instancia web y cada worker anota en la tabla `procesos`
+  su versión de Orion, su PID y su memoria (`process.version`,
+  `process.memory`). La página pregunta cada 2 s, y como cada respuesta lleva
+  la cabecera `X-Orion-Instancia`, se ve cómo el balanceador reparte.
+- **La cola.** Trabajos por estado, los últimos doce con quién los hizo, cuánto
+  esperaron y cuánto tardaron, y el reparto entre workers.
+- **La carrera.** Un producto con stock 1 y de 2 a 6 compradores con él en el
+  carrito. Las compras salen a la vez desde el navegador y llegan a instancias
+  distintas: **una sola** responde 201, el resto 409, y el stock queda en 0.
+  Es `pruebas/compra-simultanea.sh` convertido en un botón. El producto está
+  oculto, cuesta 0 € y las cuentas son propias, así que no toca la tienda; cada
+  carrera borra la anterior.
+- **La búsqueda.** La consulta de la tienda frente a `ILIKE`, con el tiempo y
+  los nodos del plan de `EXPLAIN ANALYZE`. Con el catálogo de siembra (24
+  productos) Postgres recorre la tabla en los dos casos, porque es lo más
+  barato; el índice GIN se nota con la carga masiva.
 
 ## El panel de administración
 

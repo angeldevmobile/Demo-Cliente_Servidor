@@ -1,0 +1,127 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Comercio · monitor</title>
+<link rel="stylesheet" href="estilos.css">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>⚙️</text></svg>">
+</head>
+<body>
+
+<header class="cabecera">
+  <div class="contenedor cabecera-fila">
+    <a class="marca" href="/">
+      <span class="marca-icono">◆</span>
+      <span>Comercio</span>
+      <span class="marca-sub">monitor</span>
+    </a>
+    <div class="sesion">
+      <a href="/" class="btn-plano">Tienda</a>
+    </div>
+  </div>
+</header>
+
+<section class="portada">
+  <div class="contenedor">
+    <h1>Lo que hace Orion ahora mismo</h1>
+    <p>Esta tienda la sirven varios procesos de Orion detrás de un balanceador, con una cola de
+       trabajos en PostgreSQL. Aquí se ve en vivo quién atiende, qué hace la cola y qué pasa
+       cuando varios compran la última unidad a la vez.</p>
+  </div>
+</section>
+
+<main class="contenedor monitor">
+  <p id="aviso" class="aviso" hidden></p>
+
+  <!-- Procesos -->
+  <section class="bloque">
+    <div class="bloque-cabeza">
+      <h2>Procesos</h2>
+      <span class="en-vivo"><i></i>en vivo</span>
+    </div>
+    <p class="tenue">Cada instancia web y cada worker anota su versión de Orion, su PID y su
+      memoria. Esta página pregunta cada 2 segundos, y el balanceador manda cada pregunta a
+      una instancia distinta.</p>
+    <div id="procesos" class="procesos"></div>
+    <div class="reparto">
+      <span class="reparto-titulo">Quién atendió las últimas <b id="reparto-n">0</b> peticiones de esta página</span>
+      <div id="reparto" class="reparto-barras"></div>
+    </div>
+  </section>
+
+  <!-- Cola -->
+  <section class="bloque">
+    <div class="bloque-cabeza">
+      <h2>La cola de trabajos</h2>
+      <div id="cola-cuentas" class="chips"></div>
+    </div>
+    <p class="tenue">Cada compra encola su factura <em>dentro</em> de la transacción. Los workers
+      reclaman trabajos con <code>FOR UPDATE SKIP LOCKED</code>: dos workers nunca se llevan el mismo.</p>
+    <div id="por-worker" class="chips"></div>
+    <div class="tabla-envoltorio">
+      <table class="tabla">
+        <thead><tr><th>#</th><th>Tipo</th><th>Estado</th><th>Worker</th>
+          <th class="num">Esperó</th><th class="num">Tardó</th><th class="num">Hace</th></tr></thead>
+        <tbody id="trabajos"></tbody>
+      </table>
+    </div>
+  </section>
+
+  <!-- Carrera -->
+  <section class="bloque">
+    <div class="bloque-cabeza">
+      <h2>La carrera por la última unidad</h2>
+    </div>
+    <p class="tenue">Un producto con stock 1 y varios compradores con él en el carrito. Las compras
+      salen a la vez desde tu navegador y el balanceador las reparte entre instancias. Solo una
+      puede ganar: el stock se descuenta dentro de una transacción y un
+      <code>CHECK (stock &gt;= 0)</code> tumba las demás.</p>
+    <div class="barra">
+      <label>Compradores
+        <select id="compradores">
+          <option>2</option><option>3</option><option>4</option><option>5</option>
+          <option selected>6</option>
+        </select>
+      </label>
+      <button id="lanzar" class="btn-principal">Lanzar la carrera</button>
+    </div>
+    <div id="carrera" class="carrera" hidden>
+      <div id="carrera-resumen" class="kpis"></div>
+      <div class="tabla-envoltorio">
+        <table class="tabla">
+          <thead><tr><th>Comprador</th><th>Instancia</th><th>Resultado</th><th class="num">Tardó</th></tr></thead>
+          <tbody id="carrera-filas"></tbody>
+        </table>
+      </div>
+    </div>
+  </section>
+
+  <!-- Búsqueda -->
+  <section class="bloque">
+    <div class="bloque-cabeza">
+      <h2>La búsqueda, medida</h2>
+    </div>
+    <p class="tenue">La consulta de la tienda (texto completo con índice GIN) frente a
+      <code>ILIKE '%…%'</code>, con el tiempo y el plan que da <code>EXPLAIN ANALYZE</code> en
+      PostgreSQL.</p>
+    <form id="form-busqueda" class="barra">
+      <label class="crece">Buscar
+        <input id="termino" type="search" value="auriculares" maxlength="60">
+      </label>
+      <button class="btn-principal">Medir</button>
+    </form>
+    <div id="busqueda" class="comparativa" hidden></div>
+  </section>
+</main>
+
+<footer class="pie">
+  <div class="contenedor">
+    <p><strong>Comercio</strong> - tienda de demostración escrita en Orion sobre PostgreSQL.</p>
+    <p class="tenue">La carrera usa un producto oculto a 0 € y cuentas propias: no toca la tienda.</p>
+  </div>
+</footer>
+
+<script src="monitor.js"></script>
+</body>
+</html>
