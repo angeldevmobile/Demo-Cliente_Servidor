@@ -5,16 +5,18 @@ use "auth" as auth
 use "backend/config" as config
 
 fn crear_esquema() {
-    db.exec(config.BD, "CREATE TABLE IF NOT EXISTS usuarios (
+    pasos = []
+
+    pasos.push(["CREATE TABLE IF NOT EXISTS usuarios (
         id        SERIAL PRIMARY KEY,
         email     TEXT NOT NULL UNIQUE,
         hash_pass TEXT NOT NULL,
         nombre    TEXT NOT NULL,
         rol       TEXT NOT NULL DEFAULT 'cliente',
         creado    TIMESTAMPTZ NOT NULL DEFAULT now()
-    )")
+    )", []])
 
-    db.exec(config.BD, "CREATE TABLE IF NOT EXISTS productos (
+    pasos.push(["CREATE TABLE IF NOT EXISTS productos (
         id          SERIAL PRIMARY KEY,
         sku         TEXT NOT NULL UNIQUE,
         nombre      TEXT NOT NULL,
@@ -23,59 +25,59 @@ fn crear_esquema() {
         precio      NUMERIC(10,2) NOT NULL CHECK (precio >= 0),
         stock       INTEGER NOT NULL DEFAULT 0 CHECK (stock >= 0),
         activo      BOOLEAN NOT NULL DEFAULT true
-    )")
+    )", []])
 
-    db.exec(config.BD, "CREATE INDEX IF NOT EXISTS idx_prod_categoria ON productos (categoria)")
+    pasos.push(["CREATE INDEX IF NOT EXISTS idx_prod_categoria ON productos (categoria)", []])
 
     -- El orden del catálogo. Sin este índice, pedir los 60 primeros de un
     -- millón obliga a ordenar el millón entero en cada visita.
-    db.exec(config.BD, "CREATE INDEX IF NOT EXISTS idx_prod_orden ON productos (categoria, nombre)
-                        WHERE activo")
+    pasos.push(["CREATE INDEX IF NOT EXISTS idx_prod_orden ON productos (categoria, nombre)
+                        WHERE activo", []])
 
     -- Búsqueda de texto completo: con un millón de filas, ILIKE '%texto%'
     -- recorre la tabla entera. La columna se calcula sola en cada escritura.
-    db.exec(config.BD, "ALTER TABLE productos ADD COLUMN IF NOT EXISTS busqueda tsvector
+    pasos.push(["ALTER TABLE productos ADD COLUMN IF NOT EXISTS busqueda tsvector
                         GENERATED ALWAYS AS (
                             to_tsvector('spanish', sku || ' ' || nombre || ' ' || descripcion)
-                        ) STORED")
-    db.exec(config.BD, "CREATE INDEX IF NOT EXISTS idx_prod_busqueda ON productos USING gin (busqueda)")
+                        ) STORED", []])
+    pasos.push(["CREATE INDEX IF NOT EXISTS idx_prod_busqueda ON productos USING gin (busqueda)", []])
 
-    db.exec(config.BD, "CREATE TABLE IF NOT EXISTS carritos (
+    pasos.push(["CREATE TABLE IF NOT EXISTS carritos (
         id         SERIAL PRIMARY KEY,
         usuario_id INTEGER NOT NULL REFERENCES usuarios(id) ON DELETE CASCADE,
         creado     TIMESTAMPTZ NOT NULL DEFAULT now()
-    )")
+    )", []])
 
-    db.exec(config.BD, "CREATE TABLE IF NOT EXISTS lineas (
+    pasos.push(["CREATE TABLE IF NOT EXISTS lineas (
         id          SERIAL PRIMARY KEY,
         carrito_id  INTEGER NOT NULL REFERENCES carritos(id) ON DELETE CASCADE,
         producto_id INTEGER NOT NULL REFERENCES productos(id),
         cantidad    INTEGER NOT NULL CHECK (cantidad > 0),
         UNIQUE (carrito_id, producto_id)
-    )")
+    )", []])
 
-    db.exec(config.BD, "CREATE TABLE IF NOT EXISTS pedidos (
+    pasos.push(["CREATE TABLE IF NOT EXISTS pedidos (
         id         SERIAL PRIMARY KEY,
         usuario_id INTEGER NOT NULL REFERENCES usuarios(id),
         total      NUMERIC(10,2) NOT NULL,
         estado     TEXT NOT NULL DEFAULT 'pagado',
         creado     TIMESTAMPTZ NOT NULL DEFAULT now()
-    )")
+    )", []])
 
     -- El precio se copia en la línea: un pedido de ayer no puede cambiar de
     -- importe porque hoy se haya subido el precio del producto.
-    db.exec(config.BD, "CREATE TABLE IF NOT EXISTS pedido_items (
+    pasos.push(["CREATE TABLE IF NOT EXISTS pedido_items (
         id              SERIAL PRIMARY KEY,
         pedido_id       INTEGER NOT NULL REFERENCES pedidos(id) ON DELETE CASCADE,
         producto_id     INTEGER NOT NULL REFERENCES productos(id),
         cantidad        INTEGER NOT NULL CHECK (cantidad > 0),
         precio_unitario NUMERIC(10,2) NOT NULL
-    )")
+    )", []])
 
-    db.exec(config.BD, "CREATE INDEX IF NOT EXISTS idx_items_pedido ON pedido_items (pedido_id)")
+    pasos.push(["CREATE INDEX IF NOT EXISTS idx_items_pedido ON pedido_items (pedido_id)", []])
 
     -- Cola de trabajos en segundo plano.
-    db.exec(config.BD, "CREATE TABLE IF NOT EXISTS trabajos (
+    pasos.push(["CREATE TABLE IF NOT EXISTS trabajos (
         id           SERIAL PRIMARY KEY,
         tipo         TEXT NOT NULL,
         datos        TEXT NOT NULL DEFAULT '{}',
@@ -88,26 +90,26 @@ fn crear_esquema() {
         error        TEXT,
         creado       TIMESTAMPTZ NOT NULL DEFAULT now(),
         terminado    TIMESTAMPTZ
-    )")
+    )", []])
 
     -- El índice es lo que hace barata la búsqueda del siguiente trabajo
     -- cuando la tabla acumula millones de terminados.
-    db.exec(config.BD, "CREATE INDEX IF NOT EXISTS idx_trabajos_pendientes
+    pasos.push(["CREATE INDEX IF NOT EXISTS idx_trabajos_pendientes
                         ON trabajos (estado, ejecutar_en, id)
-                        WHERE estado = 'pendiente'")
+                        WHERE estado = 'pendiente'", []])
 
-    db.exec(config.BD, "CREATE TABLE IF NOT EXISTS facturas (
+    pasos.push(["CREATE TABLE IF NOT EXISTS facturas (
         id        SERIAL PRIMARY KEY,
         pedido_id INTEGER NOT NULL UNIQUE REFERENCES pedidos(id) ON DELETE CASCADE,
         numero    TEXT NOT NULL,
         contenido TEXT NOT NULL,
         creada    TIMESTAMPTZ NOT NULL DEFAULT now()
-    )")
+    )", []])
 
     -- Informes de ventas. El archivo generado se guarda AQUÍ, no en el disco
     -- del worker: el worker que lo genera y la instancia web que lo sirve son
     -- procesos distintos, y en el compose ni siquiera comparten disco.
-    db.exec(config.BD, "CREATE TABLE IF NOT EXISTS informes (
+    pasos.push(["CREATE TABLE IF NOT EXISTS informes (
         id         SERIAL PRIMARY KEY,
         formato    TEXT NOT NULL CHECK (formato IN ('xlsx', 'pdf')),
         desde      DATE NOT NULL,
@@ -120,11 +122,11 @@ fn crear_esquema() {
         creado     TIMESTAMPTZ NOT NULL DEFAULT now(),
         terminado  TIMESTAMPTZ,
         CHECK (hasta >= desde)
-    )")
+    )", []])
 
     -- Una fila por proceso (instancia web o worker), con su última señal de
     -- vida: es lo que enseña /monitor.html.
-    db.exec(config.BD, "CREATE TABLE IF NOT EXISTS procesos (
+    pasos.push(["CREATE TABLE IF NOT EXISTS procesos (
         nombre  TEXT PRIMARY KEY,
         tipo    TEXT NOT NULL,
         version TEXT NOT NULL,
@@ -133,7 +135,11 @@ fn crear_esquema() {
         senal   TIMESTAMPTZ NOT NULL,
         rss     BIGINT NOT NULL DEFAULT 0,
         pico    BIGINT NOT NULL DEFAULT 0
-    )")
+    )", []])
+    -- Todos los procesos crean el esquema al arrancar, y sobre una base vacía
+    -- CREATE ... IF NOT EXISTS choca si dos lo hacen a la vez (23505). El
+    -- candado deja pasar a uno; los demás esperan y ya lo encuentran hecho.
+    db.transaction(config.BD, [["SELECT pg_advisory_xact_lock(7311)", []]] + pasos)
 }
 
 -- La cuenta de administración. Si alguien se registró antes con ese email,
@@ -163,7 +169,7 @@ fn sembrar_catalogo(ruta_csv) {
     puestos = 0
     for p in csv.read(ruta_csv) {
         db.exec(config.BD, "INSERT INTO productos (sku, nombre, descripcion, categoria, precio, stock)
-                            VALUES (?, ?, ?, ?, ?, ?)",
+                            VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT (sku) DO NOTHING",
                 [p["sku"], p["nombre"], p["descripcion"], p["categoria"],
                  float(p["precio"]), int(p["stock"])])
         puestos = puestos + 1
