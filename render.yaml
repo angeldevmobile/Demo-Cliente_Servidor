@@ -1,0 +1,37 @@
+# Blueprint de Render: New > Blueprint > este repositorio.
+#
+# Plan gratuito: una instancia web con el worker dentro del mismo contenedor
+# (Render no da workers gratis). Funciona porque la cola y los informes viven
+# en Postgres, no en el proceso.
+
+databases:
+  - name: comercio-db
+    plan: free
+    databaseName: comercio
+    user: comercio
+
+services:
+  - type: web
+    name: comercio
+    runtime: docker
+    plan: free
+    healthCheckPath: /health
+    dockerCommand: sh -c "orion run backend/worker.orx & exec orion run backend/main.orx"
+    envVars:
+      # URL interna: no sale de la red de Render, así que va sin TLS.
+      - key: ORION_BD
+        fromDatabase:
+          name: comercio-db
+          property: connectionString
+      - key: ORION_JWT
+        generateValue: true
+      # Los pide Render al crear el Blueprint. La contraseña de juguete del
+      # README está publicada: aquí va una nueva.
+      - key: ORION_ADMIN_EMAIL
+        sync: false
+      - key: ORION_ADMIN_PASS
+        sync: false
+      - key: ORION_INSTANCIA
+        value: render-web
+      - key: ORION_WORKER
+        value: render-worker

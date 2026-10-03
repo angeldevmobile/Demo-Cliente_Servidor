@@ -34,8 +34,7 @@ fn api_registro(req) {
     if not r["ok"] {
         return http.json_resp(400, { "error": r["error"] })
     }
-    -- Tras registrarse ya queda dentro: pedir el login otra vez es una
-    -- molestia sin ninguna ganancia.
+    -- Tras registrarse ya queda dentro
     entrada = cuentas.login(http.campo(c, "email"), http.campo(c, "pass"))
     return http.json_resp(201, { "token": entrada["token"], "usuario": entrada["usuario"] })
 }

@@ -77,6 +77,7 @@ comercio/
 │   └── catalogo.csv     catálogo de siembra
 ├── despliegue/nginx.conf
 ├── docker-compose.yml   Postgres, tres instancias, dos workers y nginx
+├── render.yaml          despliegue en Render (Blueprint)
 └── Dockerfile
 ```
 
@@ -506,6 +507,30 @@ ORION_BD="postgres://usuario:clave@host:5432/base" orion watch backend/main.orx
 
 Las credenciales del `docker-compose.yml` son de juguete y están a la vista a
 propósito: la base vive en un contenedor local y no guarda nada real.
+
+## Desplegar en Render
+
+El repositorio trae un `render.yaml`: en Render, **New → Blueprint** y se elige
+este repositorio. Crea una base Postgres y la web, con las variables ya
+enlazadas, y solo pide dos: `ORION_ADMIN_EMAIL` y `ORION_ADMIN_PASS`. **La
+contraseña tiene que ser nueva**: la de juguete está publicada en este README,
+y el administrador se siembra en el primer arranque.
+
+En el plan gratuito el worker corre en el mismo contenedor que la web, porque
+Render no da workers gratis. Funciona porque la cola y los informes viven en
+Postgres; para algo serio, el worker va como *Background Worker* aparte, con
+`orion run backend/worker.orx` y las mismas variables.
+
+Lo que hay que saber del plan gratuito:
+
+- La web **se duerme** a los 15 minutos sin tráfico, y la primera visita tarda
+  30-60 s en despertarla. Mientras duerme, el worker tampoco trabaja.
+- La **Postgres gratuita caduca a los 30 días** y tiene 1 GB: sobra para la
+  demo, no para la carga masiva del millón de productos.
+- **Una sola instancia**: el monitor enseña `render-web` y `render-worker`. La
+  app ya está hecha para escalar (JWT, cola en Postgres, nada en disco), pero
+  varias instancias en Render son de pago.
+- Las fechas van en **UTC**: «ventas de hoy» cambia de día a las 19:00 de Perú.
 
 ## Lo que ya se puede probar
 

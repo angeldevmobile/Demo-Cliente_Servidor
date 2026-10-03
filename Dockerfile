@@ -6,9 +6,10 @@
 # ubuntu-latest y exige GLIBC 2.39, que Debian bookworm (2.36) no tiene.
 FROM ubuntu:24.04
 
-# 0.1.6 como mínimo: la demo usa `and`/`or` con cortocircuito, `attempt` en
+# 0.1.7 como mínimo: el monitor usa process.version/memory/uptime, y antes
+# 0.1.6 trajo `and`/`or` con cortocircuito, `attempt` en
 # handlers de serve y los errores de Postgres con SQLSTATE.
-ARG ORION_VERSION=v0.1.6
+ARG ORION_VERSION=v0.1.7
 
 RUN apt-get update \
  && apt-get install -y --no-install-recommends ca-certificates curl \
