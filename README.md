@@ -32,7 +32,7 @@ transacciones, y es lo que separa un backend de un juguete.
 
 | Qué | Cómo se demuestra |
 |---|---|
-| Un backend se puede partir en módulos | 17 archivos `.orx` que se importan entre sí |
+| Un backend se puede partir en módulos | 17 archivos `.orx` en cinco carpetas, que se importan entre sí |
 | Las contraseñas se guardan bien | `argon2`, nunca la contraseña en claro |
 | Las sesiones son reales | JWT firmado, rutas protegidas con `router.guard` |
 | El dinero no se pierde | Checkout dentro de una transacción, con `ROLLBACK` si falla |
@@ -48,23 +48,28 @@ transacciones, y es lo que separa un backend de un juguete.
 ```
 comercio/
 ├── backend/
-│   ├── main.orx         arranque, rutas y middlewares
-│   ├── config.orx       entorno: puerto, URL de la base, secreto JWT, admin
-│   ├── http.orx         leer la petición y montar la respuesta
-│   ├── bd.orx           esquema, índices y siembra (catálogo y administrador)
-│   ├── cuentas.orx      registro, login, hash de contraseñas, JWT
-│   ├── catalogo.orx     productos y búsqueda de texto completo
-│   ├── carrito.orx      carrito del usuario
-│   ├── pedidos.orx      checkout transaccional e historial
-│   ├── cola.orx         cola de trabajos en Postgres
-│   ├── worker.orx       proceso aparte que consume la cola
-│   ├── admin.orx        productos, stock, pedidos y petición de informes
-│   ├── informes.orx     informes de ventas en Excel y PDF
-│   ├── importar.orx     carga masiva del catálogo por COPY
-│   ├── monitor.orx      procesos, cola, carrera y búsqueda medida
-│   ├── pagos.orx        cargo, aviso firmado, caducidad y conciliación
-│   ├── facturas.orx     factura en PDF, correo con el adjunto y descarga
-│   └── limite.orx       límite de peticiones por cliente, contado en Postgres
+│   ├── main.orx             arranque, rutas y middlewares
+│   ├── worker.orx           proceso aparte que consume la cola
+│   ├── base/                lo que usan todos los demás
+│   │   ├── config.orx       entorno: puerto, URL de la base, secreto JWT, admin
+│   │   ├── bd.orx           esquema, índices y siembra (catálogo y administrador)
+│   │   ├── http.orx         leer la petición y montar la respuesta
+│   │   └── limite.orx       límite de peticiones por cliente, contado en Postgres
+│   ├── tienda/              lo que ve el cliente
+│   │   ├── catalogo.orx     productos y búsqueda de texto completo
+│   │   ├── cuentas.orx      registro, login, hash de contraseñas, JWT
+│   │   ├── carrito.orx      carrito del usuario
+│   │   └── pedidos.orx      checkout transaccional e historial
+│   ├── cobro/               después de comprar
+│   │   ├── pagos.orx        cargo, aviso firmado, caducidad y conciliación
+│   │   └── facturas.orx     factura en PDF, correo con el adjunto y descarga
+│   ├── panel/               administración
+│   │   ├── admin.orx        productos, stock, pedidos y petición de informes
+│   │   ├── informes.orx     informes de ventas en Excel y PDF
+│   │   └── importar.orx     carga masiva del catálogo por COPY
+│   └── sistema/             lo que corre por detrás
+│       ├── cola.orx         cola de trabajos en Postgres
+│       └── monitor.orx      procesos, cola, carrera y búsqueda medida
 ├── pasarela/            la pasarela simulada, otro servicio de Orion
 │   ├── pasarela.orx     cargos, página de pago y avisos firmados
 │   ├── main.orx         la pasarela como servidor aparte
@@ -93,7 +98,7 @@ comercio/
 └── Dockerfile
 ```
 
-Cada archivo del backend se importa con `use "backend/pedidos" as pedidos` y
+Cada archivo del backend se importa con `use "backend/tienda/pedidos" as pedidos` y
 expone sus funciones. Es la primera demo de esta carpeta que no cabe en un
 archivo, y esa es justamente la intención.
 
@@ -697,7 +702,7 @@ curl -s -o /dev/null -w "%{http_code}\n" localhost:8083/api/yo
 curl -s -H "Authorization: Bearer <token>" localhost:8083/api/yo
 ```
 
-Tres decisiones de la fase 2 que se ven en `backend/cuentas.orx`:
+Tres decisiones de la fase 2 que se ven en `backend/tienda/cuentas.orx`:
 
 - **Se guarda el hash argon2id**, nunca la contraseña. El `$argon2id$v=19$...`
   que queda en la tabla no se puede deshacer.

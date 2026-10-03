@@ -1,8 +1,8 @@
 -- Utilidades HTTP: leer la petición y construir la respuesta.
 use "json" as json
-use "backend/config" as config
-use "backend/catalogo" as catalogo
-use "backend/cola" as cola
+use "backend/base/config" as config
+use "backend/tienda/catalogo" as catalogo
+use "backend/sistema/cola" as cola
 
 -- La cabecera X-Orion-Instancia indica qué proceso atendió la petición.
 fn json_resp(status, valor) {

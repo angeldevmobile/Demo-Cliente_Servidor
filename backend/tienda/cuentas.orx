@@ -2,7 +2,7 @@
 use "db" as db
 use "auth" as auth
 use "validate" as valida
-use "backend/config" as config
+use "backend/base/config" as config
 
 MIN_PASS = 8
 

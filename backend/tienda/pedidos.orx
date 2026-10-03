@@ -1,7 +1,7 @@
 -- Pedidos: la compra y el historial.
 use "db" as db
-use "backend/config" as config
-use "backend/carrito" as carrito
+use "backend/base/config" as config
+use "backend/tienda/carrito" as carrito
 
 -- Estados que cuentan como venta. Un pedido sin pagar reserva stock, pero no es una venta.
 ESTADOS_VENTA = "('pagado', 'enviado', 'entregado')"

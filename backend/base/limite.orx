@@ -1,6 +1,6 @@
 -- Límite de peticiones contado en Postgres: lo comparten todas las instancias.
 use "db" as db
-use "backend/config" as config
+use "backend/base/config" as config
 
 -- [método, ruta, máximo por IP, máximo entre todos (0 = sin tope), segundos de la ventana]
 REGLAS = [

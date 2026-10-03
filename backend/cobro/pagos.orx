@@ -6,7 +6,7 @@ use "net" as net
 use "crypto" as crypto
 use "regex" as regex
 use "timewarp" as tw
-use "backend/config" as config
+use "backend/base/config" as config
 
 -- Se rechazan avisos con más de 5 minutos, para que no se puedan reenviar más tarde.
 TOLERANCIA_S = 300

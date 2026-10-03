@@ -2,8 +2,8 @@
 -- Uso: `orion run herramientas/medir-busqueda.orx`
 use "db" as db
 use "regex" as regex
-use "backend/config" as config
-use "backend/catalogo" as catalogo
+use "backend/base/config" as config
+use "backend/tienda/catalogo" as catalogo
 
 REPETICIONES = 5
 

@@ -2,8 +2,8 @@
 -- Para archivos grandes: lee del disco y envía a Postgres por partes.
 use "process" as proceso
 use "fs" as fs
-use "backend/bd" as bd
-use "backend/importar" as importar
+use "backend/base/bd" as bd
+use "backend/panel/importar" as importar
 
 RUTA = proceso.arg(0, "")
 if RUTA == "" or not fs.exists(RUTA) {

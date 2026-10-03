@@ -4,14 +4,14 @@ use "db" as db
 use "json" as json
 use "env" as entorno
 use "timewarp" as tw
-use "backend/config" as config
-use "backend/bd" as bd
-use "backend/cola" as cola
-use "backend/informes" as informes
-use "backend/facturas" as facturas
-use "backend/monitor" as monitor
-use "backend/pagos" as pagos
-use "backend/limite" as limite
+use "backend/base/config" as config
+use "backend/base/bd" as bd
+use "backend/sistema/cola" as cola
+use "backend/panel/informes" as informes
+use "backend/cobro/facturas" as facturas
+use "backend/sistema/monitor" as monitor
+use "backend/cobro/pagos" as pagos
+use "backend/base/limite" as limite
 
 NOMBRE  = entorno.get("ORION_WORKER", "worker-1")
 DESCANSO = entorno.get("ORION_DESCANSO", "500ms")

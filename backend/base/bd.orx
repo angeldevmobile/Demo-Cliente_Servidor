@@ -2,7 +2,7 @@
 use "db" as db
 use "csv" as csv
 use "auth" as auth
-use "backend/config" as config
+use "backend/base/config" as config
 
 fn crear_esquema() {
     pasos = []
@@ -166,7 +166,7 @@ fn crear_esquema() {
         pico    BIGINT NOT NULL DEFAULT 0
     )", []])
 
-    -- Peticiones por cliente y ventana de tiempo, para el límite de backend/limite.orx.
+    -- Peticiones por cliente y ventana de tiempo, para el límite de backend/base/limite.orx.
     pasos.push(["CREATE TABLE IF NOT EXISTS limites (
         clave   TEXT NOT NULL,
         ventana TIMESTAMPTZ NOT NULL,

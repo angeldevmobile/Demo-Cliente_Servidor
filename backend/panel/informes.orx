@@ -5,8 +5,8 @@ use "excel" as excel
 use "pdf" as pdf
 use "format" as formato
 use "crypto" as crypto
-use "backend/config" as config
-use "backend/pedidos" as pedidos
+use "backend/base/config" as config
+use "backend/tienda/pedidos" as pedidos
 
 -- Cuenta como venta un pedido pagado, enviado o entregado.
 VENTA = "p.estado IN " + pedidos.ESTADOS_VENTA + " AND p.creado >= (?::text)::date AND p.creado < (?::text)::date + 1"

@@ -6,7 +6,7 @@ use "pdf" as pdf
 use "mail" as mail
 use "crypto" as crypto
 use "format" as formato
-use "backend/config" as config
+use "backend/base/config" as config
 
 fn eur(n) {
     return formato.number(n, 2, ".", ",") + " €"

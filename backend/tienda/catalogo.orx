@@ -1,7 +1,7 @@
 -- Catálogo: productos, búsqueda y filtros.
 use "db" as db
 use "regex" as regex
-use "backend/config" as config
+use "backend/base/config" as config
 
 -- "tecla mecan" → "tecla:* & mecan:*": cada palabra se busca como prefijo.
 -- Solo se admiten letras y dígitos, así la entrada no puede romper la consulta.

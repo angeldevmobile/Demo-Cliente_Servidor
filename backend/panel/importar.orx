@@ -5,7 +5,7 @@ use "csv" as csv
 use "fs" as fs
 use "crypto" as crypto
 use "timewarp" as tw
-use "backend/config" as config
+use "backend/base/config" as config
 
 COLUMNAS = ["sku", "nombre", "descripcion", "categoria", "precio", "stock"]
 -- Columnas opcionales de la ficha. Si el archivo no las trae, se conservan las actuales.

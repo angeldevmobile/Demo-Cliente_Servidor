@@ -1,9 +1,9 @@
 -- Panel de administración: productos, stock, pedidos e informes.
 -- El rol admin lo valida el middleware de main.orx.
 use "db" as db
-use "backend/config" as config
-use "backend/catalogo" as catalogo
-use "backend/pedidos" as pedidos_mod
+use "backend/base/config" as config
+use "backend/tienda/catalogo" as catalogo
+use "backend/tienda/pedidos" as pedidos_mod
 
 CATEGORIA_MAX = 40
 

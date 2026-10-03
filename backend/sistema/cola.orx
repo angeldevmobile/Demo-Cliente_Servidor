@@ -1,6 +1,6 @@
 -- Cola de trabajos en Postgres: la comparten todas las instancias y sobrevive a reinicios.
 use "db" as db
-use "backend/config" as config
+use "backend/base/config" as config
 
 fn encolar(tipo, datos_json) {
     return db.insert(config.BD,

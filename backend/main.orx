@@ -1,19 +1,19 @@
--- Comercio: rutas y arranque del servidor. La lógica está en los módulos de backend/.
+-- Comercio: rutas y arranque del servidor. La lógica está en las carpetas de backend/.
 use "router" as router
-use "backend/config" as config
-use "backend/http" as http
-use "backend/bd" as bd
-use "backend/catalogo" as catalogo
-use "backend/cuentas" as cuentas
-use "backend/carrito" as carrito
-use "backend/pedidos" as pedidos
-use "backend/admin" as admin
-use "backend/informes" as informes
-use "backend/importar" as importar
-use "backend/monitor" as monitor
-use "backend/pagos" as pagos
-use "backend/facturas" as facturas
-use "backend/limite" as limite
+use "backend/base/config" as config
+use "backend/base/http" as http
+use "backend/base/bd" as bd
+use "backend/tienda/catalogo" as catalogo
+use "backend/tienda/cuentas" as cuentas
+use "backend/tienda/carrito" as carrito
+use "backend/tienda/pedidos" as pedidos
+use "backend/panel/admin" as admin
+use "backend/panel/informes" as informes
+use "backend/panel/importar" as importar
+use "backend/sistema/monitor" as monitor
+use "backend/cobro/pagos" as pagos
+use "backend/cobro/facturas" as facturas
+use "backend/base/limite" as limite
 use "pasarela/pasarela" as pasarela
 
 fn api_productos(req) {
@@ -139,7 +139,7 @@ fn api_salud(req) {
     return http.salud()
 }
 
--- Límite de peticiones en las rutas que escriben o cuestan (ver backend/limite.orx).
+-- Límite de peticiones en las rutas que escriben o cuestan (ver backend/base/limite.orx).
 fn limitar(req) {
     if not limite.permite(req["method"], req["path"], http.ip(req)) {
         return http.json_resp(429, { "error": "demasiadas peticiones; prueba de nuevo en un rato" })

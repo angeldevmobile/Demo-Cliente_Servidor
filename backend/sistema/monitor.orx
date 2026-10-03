@@ -5,12 +5,12 @@ use "auth" as auth
 use "crypto" as crypto
 use "regex" as regex
 use "process" as proceso
-use "backend/config" as config
-use "backend/cola" as cola
-use "backend/cuentas" as cuentas
-use "backend/carrito" as carrito
-use "backend/catalogo" as catalogo
-use "backend/pagos" as pagos
+use "backend/base/config" as config
+use "backend/sistema/cola" as cola
+use "backend/tienda/cuentas" as cuentas
+use "backend/tienda/carrito" as carrito
+use "backend/tienda/catalogo" as catalogo
+use "backend/cobro/pagos" as pagos
 
 SKU_CARRERA = "CARRERA-1"
 MAX_COMPRADORES = 6

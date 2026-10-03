@@ -1,6 +1,6 @@
 -- Carrito: una línea por producto, con su cantidad.
 use "db" as db
-use "backend/config" as config
+use "backend/base/config" as config
 
 -- Un carrito por usuario; se crea al añadir el primer producto.
 fn carrito_de(usuario_id) {
