@@ -36,6 +36,7 @@ transacciones, y es lo que separa un backend de un juguete.
 | El stock no se vende dos veces | Bloqueo de fila en Postgres, probado con compradores simultáneos |
 | Los informes salen del mismo lenguaje | Excel y PDF generados por Orion, sin librerías externas |
 | Los datos entran rápido | Catálogo de un millón de filas por `COPY`, con la RAM medida |
+| Todo eso se puede ver | `/monitor.html`: procesos, cola y carrera en vivo, sin leer logs |
 
 ## Estructura
 
@@ -55,13 +56,13 @@ comercio/
 │   ├── admin.orx        productos, stock, pedidos y petición de informes
 │   ├── informes.orx     informes de ventas en Excel y PDF
 │   ├── importar.orx     carga masiva del catálogo por COPY
-│   └── monitor.orx   procesos, cola, carrera y búsqueda medida
+│   └── monitor.orx      procesos, cola, carrera y búsqueda medida
 ├── frontend/
 │   ├── index.html       tienda y carrito
 │   ├── admin.html       panel de administración
 │   ├── app.js
 │   ├── admin.js
-│   ├── monitor.html  Orion funcionando, en vivo
+│   ├── monitor.html     Orion funcionando, en vivo
 │   ├── monitor.js
 │   └── estilos.css
 ├── herramientas/
@@ -89,12 +90,13 @@ archivo, y esa es justamente la intención.
 usuarios     id, email, hash_pass, nombre, rol, creado
 productos    id, sku, nombre, descripcion, categoria, precio, stock, activo
 carritos     id, usuario_id, creado
-lineas       id, carrito_id, producto_id, cantidad, precio_unitario
+lineas       id, carrito_id, producto_id, cantidad
 pedidos      id, usuario_id, total, estado, creado
 pedido_items id, pedido_id, producto_id, cantidad, precio_unitario
 trabajos     id, tipo, datos, estado, intentos, ejecutar_en, tomado_por, …
 facturas     id, pedido_id, numero, contenido, creada
 informes     id, formato, desde, hasta, estado, contenido (BYTEA), bytes, …
+procesos     nombre, tipo, version, pid, arranco, senal, rss, pico
 ```
 
 El precio se guarda **también en la línea del pedido**. Un pedido de ayer no
@@ -140,7 +142,7 @@ exige el rol `admin` en el token (403 si no).
 
 ## El checkout, que es el corazón
 
-Cuatro sentencias en **una** transacción, y el orden importa: el descuento de
+Cinco sentencias en **una** transacción, y el orden importa: el descuento de
 stock va primero porque es lo único que puede fallar.
 
 ```sql
@@ -149,6 +151,7 @@ BEGIN
     FROM lineas l WHERE l.producto_id = p.id AND l.carrito_id = ?
   INSERT INTO pedidos (usuario_id, total) SELECT ?, SUM(p.precio * l.cantidad) ...
   INSERT INTO pedido_items ... SELECT currval('pedidos_id_seq'), ...
+  INSERT INTO trabajos (tipo, datos) SELECT 'factura', ...  -- la factura, a la cola
   DELETE FROM lineas WHERE carrito_id = ?
 COMMIT
 ```
@@ -228,6 +231,17 @@ Mientras una fase no esté, sus controles no aparecen en la página: es
 preferible a enseñar botones que devuelven 404. El interruptor está arriba de
 `frontend/app.js`.
 
+### Lo que viene
+
+9. ⬜ **Pago**: una pasarela simulada, escrita también en Orion, que imita a
+   las que se usan en Perú (Culqi, Izipay, Niubiz, Mercado Pago). El pedido
+   nace como `pendiente_pago` con el stock reservado, la pasarela avisa por un
+   webhook firmado con HMAC, los avisos repetidos se cuentan una sola vez, y un
+   pedido sin pagar caduca y devuelve el stock.
+10. ⬜ **Factura de verdad**: en PDF, descargable desde "Mis pedidos" y enviada
+    por correo con el PDF adjunto. Antes hay que añadir los adjuntos al módulo
+    `mail` de Orion.
+
 ## Monitor
 
 `/monitor.html`, pública. Esta demo no vende nada de verdad: lo que tiene
@@ -249,6 +263,10 @@ que enseñar es qué hace Orion por detrás, y aquí se ve sin leer logs.
   los nodos del plan de `EXPLAIN ANALYZE`. Con el catálogo de siembra (24
   productos) Postgres recorre la tabla en los dos casos, porque es lo más
   barato; el índice GIN se nota con la carga masiva.
+
+Con `docker compose` se ven las tres instancias y los dos workers, y la barra
+de reparto de la página muestra a nginx turnando las peticiones. En local, con
+un solo proceso web, todo lo atiende `local`.
 
 ## El panel de administración
 
@@ -359,6 +377,10 @@ eso, 0,08 ms.
                   PostgreSQL  <---- worker1, worker2   (dos procesos de fondo)
 ```
 
+Cada respuesta JSON lleva la cabecera `X-Orion-Instancia` con el nombre de la
+instancia que la atendió (`ORION_INSTANCIA`), así que el reparto se ve desde el
+navegador y no solo en los logs.
+
 Ninguna instancia guarda nada en su memoria: la sesión viaja en el JWT y todo
 lo demás vive en Postgres. Por eso **no hacen falta sesiones pegajosas** en el
 balanceador, y añadir una cuarta instancia es una línea en el compose.
@@ -447,14 +469,17 @@ uno que ya tengas instalado:
 docker compose up -d --build
 ```
 
-→ http://localhost:8086
+→ http://localhost:8086 · panel en `/admin.html` · monitor en `/monitor.html`
+
+La imagen descarga el binario de Orion de GitHub Releases; la versión va en
+`ORION_VERSION`, arriba del `Dockerfile`.
 
 **Solo para desarrollar** (una instancia en tu máquina, con recarga
 automática):
 
 ```bash
 docker compose up -d postgres
-orion watch backend/main.orx      # http://localhost:8083 (panel: /admin.html)
+orion watch backend/main.orx      # http://localhost:8083 (/admin.html, /monitor.html)
 orion run   backend/worker.orx    # en otra terminal: facturas e informes
 ```
 
@@ -476,6 +501,8 @@ ORION_BD="postgres://usuario:clave@host:5432/base" orion watch backend/main.orx
 | `ORION_ADMIN_EMAIL` | `admin@comercio.test` | Cuenta de administración que se siembra al arrancar |
 | `ORION_ADMIN_PASS` | `admin-de-juguete` | Su contraseña |
 | `ORION_TMP` | `tmp` | Carpeta de archivos de paso (informes a medio generar) |
+| `ORION_INSTANCIA` | `local` | Nombre de la instancia web, el que sale en el monitor |
+| `ORION_WORKER` | `worker-1` | Nombre del worker, el que sale en la cola |
 
 Las credenciales del `docker-compose.yml` son de juguete y están a la vista a
 propósito: la base vive en un contenedor local y no guarda nada real.
@@ -493,14 +520,15 @@ Y las cuentas:
 
 ```bash
 # Crear una cuenta (devuelve el token, ya dentro)
-curl -s -X POST localhost:8083/api/registro -H "Content-Type: application/json"      -d '{"email":"ana@ejemplo.com","pass":"contrasena-larga","nombre":"Ana"}'
+curl -s -X POST localhost:8083/api/registro -H "Content-Type: application/json" \
+     -d '{"email":"ana@ejemplo.com","pass":"contrasena-larga","nombre":"Ana"}'
 
 # Entrar
-curl -s -X POST localhost:8083/api/login -H "Content-Type: application/json"      -d '{"email":"ana@ejemplo.com","pass":"contrasena-larga"}'
+curl -s -X POST localhost:8083/api/login -H "Content-Type: application/json" \
+     -d '{"email":"ana@ejemplo.com","pass":"contrasena-larga"}'
 
 # Ruta protegida: sin token responde 401 y el handler ni se ejecuta
-curl -s -o /dev/null -w "%{http_code}
-" localhost:8083/api/yo
+curl -s -o /dev/null -w "%{http_code}\n" localhost:8083/api/yo
 curl -s -H "Authorization: Bearer <token>" localhost:8083/api/yo
 ```
 
@@ -513,6 +541,15 @@ Tres decisiones de la fase 2 que se ven en `backend/cuentas.orx`:
 - **Registrarse ya te deja dentro.** Pedir el login otra vez es una molestia
   sin ninguna ganancia.
 
-La búsqueda y los filtros los resuelve Postgres con `ILIKE` y parámetros
-enlazados, no un bucle en Orion: con el catálogo de un millón de filas de la
-fase 5, traerse todo a memoria para descartarlo sería el final de la demo.
+La búsqueda y los filtros los resuelve Postgres, con texto completo y
+parámetros enlazados, no un bucle en Orion: con el catálogo de un millón de
+filas de la fase 5, traerse todo a memoria para descartarlo sería el final de
+la demo.
+
+Y el monitor, también por `curl`:
+
+```bash
+curl -s localhost:8083/api/monitor                        # procesos y cola
+curl -s "localhost:8083/api/monitor/busqueda?q=teclado"   # tiempos y plan
+curl -si localhost:8083/api/monitor | grep X-Orion        # quién atendió
+```
