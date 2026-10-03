@@ -1,11 +1,10 @@
--- Utilidades de HTTP: leer la petición y montar la respuesta.
+-- Utilidades HTTP: leer la petición y construir la respuesta.
 use "json" as json
 use "backend/config" as config
 use "backend/catalogo" as catalogo
 use "backend/cola" as cola
 
--- X-Orion-Instancia: qué proceso atendió la petición. Con el balanceador
--- delante, es lo que deja ver el reparto desde el navegador.
+-- La cabecera X-Orion-Instancia indica qué proceso atendió la petición.
 fn json_resp(status, valor) {
     return { "status": status, "body": json.forge(valor), "content_type": "application/json",
              "headers": { "X-Orion-Instancia": config.INSTANCIA } }
@@ -30,7 +29,7 @@ fn entero(req, clave, por_defecto) {
     }
 }
 
--- El cuerpo JSON, o null si no hay o no se entiende.
+-- Cuerpo JSON de la petición, o null si falta o no es válido.
 fn cuerpo(req) {
     attempt {
         return json.parse(req["body"])
@@ -39,7 +38,7 @@ fn cuerpo(req) {
     }
 }
 
--- Un campo del cuerpo como texto, o "" si falta.
+-- Campo del cuerpo como texto, o "" si falta.
 fn campo(c, clave) {
     if type(c) != "dict" or not has_key(c, clave) {
         return ""
@@ -47,7 +46,7 @@ fn campo(c, clave) {
     return str(c[clave])
 }
 
--- Un campo del cuerpo como entero, o `por_defecto` si falta o no es número.
+-- Campo del cuerpo como entero, o `por_defecto` si falta o no es numérico.
 fn campo_entero(c, clave, por_defecto) {
     if type(c) != "dict" or not has_key(c, clave) {
         return por_defecto
@@ -59,7 +58,7 @@ fn campo_entero(c, clave, por_defecto) {
     }
 }
 
--- El :id de la ruta, o 0 si no es un número.
+-- El :id de la ruta, o 0 si no es numérico.
 fn id_ruta(req) {
     attempt {
         return int(req["params"]["id"])

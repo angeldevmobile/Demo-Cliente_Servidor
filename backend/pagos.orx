@@ -1,6 +1,5 @@
--- Pagos: la tienda crea el cargo en la pasarela, el cliente paga allí y la
--- pasarela avisa con un webhook firmado. Lo que confirma un pago es ese
--- aviso (o la conciliación), nunca que el navegador vuelva a la tienda.
+-- Pagos: la tienda crea el cargo, el cliente paga en la pasarela y esta avisa con un webhook firmado.
+-- Un pago se confirma solo por ese aviso o por la conciliación, no por la vuelta del navegador.
 use "db" as db
 use "json" as json
 use "net" as net
@@ -9,16 +8,14 @@ use "regex" as regex
 use "timewarp" as tw
 use "backend/config" as config
 
--- Un aviso con una marca de tiempo más vieja que esto se rechaza: así no
--- sirve de nada capturar uno y reenviarlo más tarde.
+-- Se rechazan avisos con más de 5 minutos, para que no se puedan reenviar más tarde.
 TOLERANCIA_S = 300
 
 fn cabecera_clave() {
     return { "Authorization": "Bearer " + config.PASARELA_CLAVE }
 }
 
--- El origen público tal como lo ve el navegador (detrás de nginx o de
--- Render), para la URL a la que vuelve el cliente tras pagar.
+-- Origen público (protocolo y host) tal como lo ve el navegador, para la URL de vuelta.
 fn origen(req) {
     h = req["headers"]
     proto = "http"
@@ -98,7 +95,7 @@ fn recibir(req) {
     if abs(tw.timestamp() - int(f["t"])) > TOLERANCIA_S {
         return { "codigo": 401, "error": "aviso caducado" }
     }
-    -- Se verifica el cuerpo tal cual llegó, antes de parsearlo.
+    -- La firma se verifica sobre el cuerpo tal cual llegó, antes de parsearlo.
     if not crypto.verify(f["t"] + "." + req["body"], f["v1"], config.PASARELA_SECRETO) {
         return { "codigo": 401, "error": "firma no válida" }
     }
@@ -107,9 +104,8 @@ fn recibir(req) {
     return { "codigo": 200, "resultado": r }
 }
 
--- Idempotente: el aviso, el cambio de estado y la factura van en UNA
--- sentencia. Un aviso repetido solo suma a `veces`; el pedido solo pasa a
--- 'pagado' desde 'pendiente_pago', con su cargo y su importe exactos.
+-- Idempotente: registrar el aviso, marcar el pedido como pagado y encolar la factura
+-- es una sola sentencia. Un aviso repetido solo incrementa `veces`.
 fn aplicar(aviso_id, evento, cargo_id, pedido_id, importe, motivo) {
     if evento == "cargo.pagado" {
         r = db.first(config.BD, "
@@ -137,11 +133,10 @@ fn aplicar(aviso_id, evento, cargo_id, pedido_id, importe, motivo) {
         }
         resultado = "pagado"
         if r["pagado"] == 0 and r["estado"] == "pagado" and r["cargo"] == cargo_id {
-            -- El aviso y la conciliación confirmaron el mismo cobro.
+            -- El aviso y la conciliación confirmaron el mismo pago.
             resultado = "ya estaba pagado: ignorado"
         } else if r["pagado"] == 0 {
-            -- Llegó el dinero de un pedido que ya no lo esperaba (caducado,
-            -- cancelado, otro cargo): hay que devolverlo, no perderlo.
+            -- Pago de un pedido que ya no lo esperaba (caducado o cancelado): se marca para devolverlo.
             resultado = "pago sin pedido que lo espere (estaba " + str(r["estado"]) + "): devolver"
             db.exec(config.BD, "UPDATE pedidos SET pago_motivo = ? WHERE id = ?", [resultado, pedido_id])
         }
@@ -170,8 +165,7 @@ fn aplicar(aviso_id, evento, cargo_id, pedido_id, importe, motivo) {
 
 --   Lo que hace el worker
 
--- Un pedido sin pagar a tiempo caduca y devuelve su stock, en una sola
--- sentencia: o las dos cosas o ninguna.
+-- Caduca los pedidos sin pagar y devuelve su stock en una sola sentencia.
 fn caducar() {
     r = db.first(config.BD, "
         WITH c AS (
@@ -188,8 +182,7 @@ fn caducar() {
     return r["caducados"]
 }
 
--- Si un aviso se perdió (la tienda caída justo entonces), se pregunta a la
--- pasarela por los cargos que llevan un rato sin respuesta.
+-- Recupera avisos perdidos: consulta a la pasarela los cargos sin respuesta después de 1 minuto.
 fn conciliar() {
     hechos = 0
     sin_respuesta = db.query(config.BD, "

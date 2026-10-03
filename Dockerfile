@@ -1,15 +1,9 @@
-# Comercio: imagen de despliegue.
-#
-# No compila nada. Baja un binario y copia el codigo: por eso la imagen final
-# pesa ~120 MB y arranca en milisegundos.
-# Ubuntu 24.04 y no Debian 12: el binario publicado de Orion se compila en
-# ubuntu-latest y exige GLIBC 2.39, que Debian bookworm (2.36) no tiene.
+# Imagen de la demo: descarga el binario de Orion y copia el código, sin compilar.
+# Ubuntu 24.04 porque el binario publicado requiere GLIBC 2.39.
 FROM ubuntu:24.04
 
-# 0.1.8 como mínimo: la pasarela monta sus rutas pasando funciones de su
-# módulo, y usa los timeouts de net. 0.1.7 trajo process.version/memory, y
-# 0.1.6 trajo `and`/`or` con cortocircuito, `attempt` en
-# handlers de serve y los errores de Postgres con SQLSTATE.
+# Versión mínima 0.1.8: la pasarela registra sus rutas con funciones de su módulo
+# y usa los timeouts de net.
 ARG ORION_VERSION=v0.1.8
 
 RUN apt-get update \

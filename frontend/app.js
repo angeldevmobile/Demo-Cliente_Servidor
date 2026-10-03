@@ -1,6 +1,6 @@
-// Tienda: habla con el backend de Orion por su API pública.
+// Tienda: frontend que consume la API del backend en Orion.
 
-// Lo construido. Mientras una fase sea false, sus controles no se muestran.
+// Funciones activas; con false, sus controles no se muestran.
 const FASES = { cuentas: true, carrito: true, panel: true };
 
 const $ = (id) => document.getElementById(id);
@@ -59,8 +59,8 @@ function aviso(texto, tono) {
   el.hidden = false;
 }
 
-// El token vive en localStorage y viaja en la cabecera Authorization. No se
-// guarda en una cookie para que ninguna petición lo mande sin querer.
+// El JWT se guarda en localStorage y se envía en la cabecera Authorization,
+// no en una cookie, para que no viaje en peticiones que no lo necesitan.
 const sesion = {
   get token() { try { return localStorage.getItem("token"); } catch { return null } },
   get usuario() {
@@ -86,7 +86,7 @@ async function api(ruta, opciones) {
 
   const r = await fetch(ruta, op);
   const datos = await r.json().catch(() => ({}));
-  // 401 con token guardado significa que caducó: se limpia y se pide entrar.
+  // 401 con token guardado: el token caducó, se borra la sesión.
   if (r.status === 401 && sesion.token) {
     sesion.salir();
     throw new Error("tu sesión ha caducado, vuelve a entrar");
@@ -248,7 +248,7 @@ async function cargarCategorias() {
   }
 }
 
-// La búsqueda espera a que dejes de teclear: una consulta por tecla sobra.
+// Debounce: busca 250 ms después de la última tecla.
 let temporizador = null;
 $("q").addEventListener("input", (ev) => {
   clearTimeout(temporizador);
@@ -329,7 +329,7 @@ async function anadirAlCarrito(productoId, cantidad) {
   }
 }
 
-// Líneas que la última compra rechazó por falta de stock, para marcarlas.
+// Líneas rechazadas por falta de stock en la última compra, para marcarlas.
 let agotadas = new Set();
 
 async function cambiarCantidad(id, cantidad) {
@@ -373,7 +373,7 @@ $("pagar").addEventListener("click", async () => {
     await Promise.all([cargarCarrito(), cargarCatalogo()]);
     await irAPagar(pedido.id);
   } catch (e) {
-    // 409: el carrito era válido, pero alguien se adelantó con el stock.
+    // 409: el carrito era válido, pero otro comprador se llevó el stock.
     agotadas = new Set(e.datos?.agotadas || []);
     aviso(e.message, "error");
     await Promise.all([cargarCarrito(), cargarCatalogo()]);
@@ -397,8 +397,8 @@ Promise.all([cargarCategorias(), cargarCatalogo()]).catch((e) =>
   aviso("No se pudo cargar el catálogo: " + e.message, "error")
 );
 
-//   Vistas: catálogo, ficha, mis pedidos y confirmación. La ruta va en el
-//   hash para que el botón atrás y los enlaces funcionen sin servidor.
+//   Vistas: catálogo, ficha, mis pedidos y confirmación. La ruta va en el hash (#/p/SKU)
+//   para que funcionen el botón atrás y los enlaces.
 
 function rutaFicha(sku) { return "#/p/" + encodeURIComponent(sku); }
 
@@ -535,8 +535,7 @@ const HORA = new Intl.DateTimeFormat("es-ES", { hour: "2-digit", minute: "2-digi
 const etiquetaEstado = (e) =>
   `<span class="estado estado-${escapar(e)}">${escapar(NOMBRE_ESTADO[e] || e)}</span>`;
 
-// Crea (o reutiliza) el cargo y manda al cliente a la página de la pasarela.
-// Si falla, se queda en la confirmación con el botón para reintentar.
+// Crea (o reutiliza) el cargo y redirige a la pasarela. Si falla, muestra el pedido con el botón Pagar.
 async function irAPagar(id) {
   try {
     const r = await api(`/api/pedidos/${id}/pagar`, { method: "POST" });
@@ -547,7 +546,7 @@ async function irAPagar(id) {
   }
 }
 
-// Una línea con lo que falta: pagar, la factura, o por qué no se completó.
+// Texto de estado del pedido: plazo para pagar, factura o motivo del rechazo.
 function notaPedido(p) {
   if (p.estado === "pendiente_pago") {
     const motivo = p.pago_motivo ? `Último intento: ${escapar(p.pago_motivo)}. ` : "";
@@ -561,7 +560,7 @@ function notaPedido(p) {
     data-nombre="${escapar(p.factura)}.pdf">Descargar PDF</button>${p.factura_enviada ? " · enviada a tu correo" : ""}`;
 }
 
-// Lo que todavía puede cambiar solo: un pago en vuelo, la factura o su correo.
+// Pedidos que aún pueden cambiar: pago pendiente, factura o correo por enviar.
 const enMovimiento = (p) => p.estado === "pendiente_pago" || (PAGADO.has(p.estado) && !p.factura_enviada);
 
 function botonPagar(p) {
@@ -569,8 +568,7 @@ function botonPagar(p) {
     ? `<button class="btn-principal" data-pagar="${p.id}">Pagar ${EUR.format(p.total)}</button>` : "";
 }
 
-// El PDF necesita el token: un enlace normal no lo manda, así que se pide con
-// fetch y se entrega al navegador como descarga.
+// La descarga necesita el JWT en la cabecera: se pide con fetch y se guarda como archivo.
 async function descargarFactura(id, nombre) {
   try {
     const r = await fetch(`/api/pedidos/${id}/factura`, { headers: { Authorization: "Bearer " + sesion.token } });
@@ -635,8 +633,8 @@ async function pintarPedidos(intento = 0) {
   if (pedidos.some(enMovimiento)) refrescarLuego(pintarPedidos, intento);
 }
 
-// A la vuelta de la pasarela el aviso del pago puede tardar un instante en
-// llegar: mientras el pedido siga pendiente, la página vuelve a preguntar.
+// Al volver de la pasarela, el aviso de pago puede tardar un momento:
+// mientras siga pendiente, se vuelve a consultar.
 async function pintarConfirmacion(id, intento = 0) {
   clearTimeout(refresco);
   const v = $("vista-confirmacion");

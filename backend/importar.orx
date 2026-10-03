@@ -1,5 +1,5 @@
--- Carga masiva del catálogo desde un CSV por COPY. Para archivos grandes,
--- herramientas/importar.orx (ver el README, fase 5).
+-- Importación masiva del catálogo desde CSV con COPY.
+-- Para archivos grandes, herramientas/importar.orx.
 use "db" as db
 use "csv" as csv
 use "fs" as fs
@@ -8,11 +8,10 @@ use "timewarp" as tw
 use "backend/config" as config
 
 COLUMNAS = ["sku", "nombre", "descripcion", "categoria", "precio", "stock"]
--- La ficha del producto. Si el archivo no las trae, lo que ya había se queda.
+-- Columnas opcionales de la ficha. Si el archivo no las trae, se conservan las actuales.
 OPCIONALES = ["detalle", "caracteristicas"]
 
--- Las columnas del archivo, en su orden: COPY las asigna por posición. Solo se
--- lee la cabecera, no el archivo entero.
+-- Columnas del CSV en su orden (COPY las asigna por posición). Solo lee la cabecera.
 fn columnas_de(ruta) {
     cabecera = []
     for c in csv.headers(ruta) {
@@ -31,9 +30,8 @@ fn columnas_de(ruta) {
     return cabecera
 }
 
--- COPY en streaming a una tabla de paso con columnas de texto, revisión de
--- todas las filas (para decir qué SKU falla y por qué) y fusión en una sola
--- sentencia. La tabla de paso es UNLOGGED y con nombre aleatorio.
+-- COPY a una tabla temporal UNLOGGED, validación de todas las filas
+-- y fusión con el catálogo en una sola sentencia.
 fn cargar(ruta) {
     reloj = tw.clock()
     columnas = columnas_de(ruta)
@@ -52,8 +50,7 @@ fn cargar(ruta) {
     }
     db.exec(config.BD, "DROP TABLE IF EXISTS " + paso)
 
-    -- Tras meter de golpe cientos de miles de filas, las estadísticas del
-    -- planificador están viejas y puede elegir un plan malo para la búsqueda.
+    -- Actualiza las estadísticas del planificador después de una carga grande.
     db.exec(config.BD, "ANALYZE productos")
 
     r["segundos"] = tw.elapsed(reloj)
@@ -70,7 +67,7 @@ fn copiar_y_fusionar(paso, ruta, columnas, reloj) {
     }
     s_revision = tw.elapsed(reloj) - s_copia
 
-    -- La ficha solo se pisa si el archivo trae esa columna.
+    -- La ficha solo se actualiza si el archivo incluye esa columna.
     ficha = ""
     for c in OPCIONALES {
         if columnas.contains(c) {
@@ -78,8 +75,8 @@ fn copiar_y_fusionar(paso, ruta, columnas, reloj) {
         }
     }
 
-    -- El stock de lo que ya existía no se pisa (se ajusta desde el panel); los
-    -- nuevos entran con el suyo. `xmax = 0` distingue insertado de actualizado.
+    -- No modifica el stock de productos existentes; los nuevos entran con el suyo.
+    -- `xmax = 0` distingue filas insertadas de actualizadas.
     r = db.first(config.BD, "
         WITH f AS (
             INSERT INTO productos (sku, nombre, descripcion, categoria, precio, stock,
@@ -110,9 +107,8 @@ fn copiar_y_fusionar(paso, ruta, columnas, reloj) {
     }
 }
 
--- "" si todo vale; si no, las primeras filas que fallan y por qué. Los
--- patrones de precio y stock son también los límites de NUMERIC(10,2) y de
--- INTEGER, así que la conversión de la fusión ya no puede fallar.
+-- Devuelve "" si todo es válido, o las primeras filas con error.
+-- Los patrones coinciden con los límites de NUMERIC(10,2) e INTEGER.
 fn revisar(paso) {
     malas = db.query(config.BD, "
         SELECT COALESCE(NULLIF(sku, ''), '(sin SKU)') AS sku,
@@ -148,13 +144,11 @@ fn revisar(paso) {
     return ""
 }
 
--- Más que esto, por la línea de órdenes: `serve` lee el cuerpo entero de la
--- petición a memoria antes de llamar al handler, así que una subida enorme
--- ya ha costado su tamaño en RAM (varias veces) cuando llega aquí.
+-- Límite de subida por HTTP: serve carga el cuerpo completo en memoria.
+-- Para más, usar la herramienta de línea de comandos.
 MAX_SUBIDA = 50 * 1048576
 
--- Un CSV subido desde el panel. `serve` lo deja en un temporal; se borra
--- pase lo que pase.
+-- CSV subido desde el panel. El archivo temporal se borra siempre, también si falla.
 fn desde_subida(archivo) {
     ruta = archivo["tmp_path"]
     if archivo["size"] > MAX_SUBIDA {

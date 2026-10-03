@@ -1,5 +1,4 @@
--- Cola de trabajos en Postgres y no en memoria, para que la compartan varias
--- instancias y un reinicio no se lleve lo pendiente.
+-- Cola de trabajos en Postgres: la comparten todas las instancias y sobrevive a reinicios.
 use "db" as db
 use "backend/config" as config
 
@@ -8,8 +7,8 @@ fn encolar(tipo, datos_json) {
         "INSERT INTO trabajos (tipo, datos) VALUES (?, ?) RETURNING id", [tipo, datos_json])
 }
 
--- Reclama el siguiente trabajo en una sola sentencia: el subselect lo bloquea
--- con SKIP LOCKED, así dos workers nunca se llevan el mismo.
+-- Toma el siguiente trabajo en una sola sentencia. FOR UPDATE SKIP LOCKED evita
+-- que dos workers tomen el mismo.
 fn tomar(worker) {
     return db.first(config.BD, "
         UPDATE trabajos
@@ -32,9 +31,8 @@ fn terminar(id) {
                         WHERE id = ?", [id])
 }
 
--- Un fallo no tira el trabajo: se reintenta con espera creciente (5s, 10s,
--- 20s...) y solo tras agotar los intentos se marca como fallido, para que
--- alguien pueda mirarlo.
+-- Si falla, reintenta con espera creciente (5 s, 10 s, 20 s…).
+-- Al agotar los intentos lo marca como 'fallido'.
 fn fallar(id, mensaje, intentos, max_intentos) {
     if intentos >= max_intentos {
         db.exec(config.BD, "UPDATE trabajos SET estado = 'fallido', error = ?, terminado = now()
@@ -49,8 +47,7 @@ fn fallar(id, mensaje, intentos, max_intentos) {
     return "reintentara"
 }
 
--- Un worker que muere deja su trabajo en 'procesando' para siempre. Esto lo
--- devuelve a la cola pasados unos minutos.
+-- Devuelve a la cola los trabajos de un worker que se detuvo a mitad.
 fn rescatar(minutos) {
     db.exec(config.BD, "UPDATE trabajos
                         SET estado = 'pendiente', tomado_por = NULL, tomado_en = NULL

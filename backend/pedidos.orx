@@ -3,15 +3,12 @@ use "db" as db
 use "backend/config" as config
 use "backend/carrito" as carrito
 
--- Los estados que cuentan como venta. Un pedido sin pagar reserva stock,
--- pero no es dinero todavía.
+-- Estados que cuentan como venta. Un pedido sin pagar reserva stock, pero no es una venta.
 ESTADOS_VENTA = "('pagado', 'enviado', 'entregado')"
 VENDIDO = "estado IN " + ESTADOS_VENTA
 
--- La compra entera o nada, en una transacción. El descuento de stock va primero:
--- si no alcanza, el CHECK (stock >= 0) la revierte entera. El propio UPDATE
--- bloquea las filas, así dos compras del mismo producto se ponen en fila.
--- El pedido nace sin pagar y con el stock reservado hasta `expira`.
+-- Compra completa en una transacción. Primero descuenta stock: si no alcanza, el CHECK
+-- (stock >= 0) revierte todo. El pedido queda 'pendiente_pago' hasta `expira`.
 fn comprar(usuario_id) {
     cid = carrito.carrito_de(usuario_id)
     cuenta = db.first(config.BD, "SELECT COUNT(*) AS n FROM lineas WHERE carrito_id = ?", [cid])
@@ -29,8 +26,7 @@ fn comprar(usuario_id) {
           FROM lineas l JOIN productos p ON p.id = l.producto_id
           WHERE l.carrito_id = ?", [usuario_id, str(config.PAGO_MINUTOS), cid]],
 
-        -- `currval` devuelve el id que acaba de generar ESTA sesión, así que
-        -- no se confunde con un pedido de otro comprador simultáneo.
+        -- currval devuelve el id generado en esta misma sesión, sin mezclarse con otras compras.
         ["INSERT INTO pedido_items (pedido_id, producto_id, cantidad, precio_unitario)
           SELECT currval('pedidos_id_seq'), l.producto_id, l.cantidad, p.precio
           FROM lineas l JOIN productos p ON p.id = l.producto_id
@@ -42,7 +38,7 @@ fn comprar(usuario_id) {
     attempt {
         db.transaction(config.BD, pasos)
     } handle err {
-        -- 23514: el CHECK (stock >= 0) abortó la compra entera.
+        -- 23514: el CHECK (stock >= 0) revirtió la compra.
         if str(err).contains("SQLSTATE 23514") {
             return sin_stock(cid)
         }
@@ -52,8 +48,7 @@ fn comprar(usuario_id) {
     return { "ok": yes, "error": "", "pedido": ultimo(usuario_id) }
 }
 
--- Qué líneas ya no tienen stock, solo para el mensaje: la compra ya la ha
--- rechazado la transacción, y esto no decide nada.
+-- Líneas sin stock suficiente, solo para el mensaje de error.
 fn sin_stock(carrito_id) {
     lineas = db.query(config.BD, "
         SELECT l.id, p.nombre, p.stock FROM lineas l
@@ -90,8 +85,7 @@ fn items(pedido_id) {
         WHERE i.pedido_id = ? ORDER BY i.id", [pedido_id])
 }
 
--- La factura la genera el worker cuando llega el pago: hasta entonces sale
--- null, y la página dice que se está generando.
+-- Historial con sus líneas. `factura` es null hasta que el worker la genera.
 fn mios(usuario_id) {
     fuera = []
     for p in db.query(config.BD, "SELECT p.id, p.total, p.estado, p.creado, p.expira, p.pago_motivo,

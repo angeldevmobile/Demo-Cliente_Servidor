@@ -1,5 +1,5 @@
--- Worker de la cola: `orion run backend/worker.orx`. Pueden correr varios, en
--- cualquier máquina, sin procesar nada dos veces.
+-- Worker de la cola: `orion run backend/worker.orx`.
+-- Pueden ejecutarse varios a la vez sin procesar un trabajo dos veces.
 use "db" as db
 use "json" as json
 use "env" as entorno
@@ -14,8 +14,7 @@ use "backend/pagos" as pagos
 
 NOMBRE  = entorno.get("ORION_WORKER", "worker-1")
 DESCANSO = entorno.get("ORION_DESCANSO", "500ms")
--- Cuántos trabajos procesar antes de salir. 0 = sin fin (lo normal en un
--- servidor); un número concreto sirve para las pruebas.
+-- Trabajos a procesar antes de terminar. 0 = sin límite; un número sirve para pruebas.
 TOPE = int(entorno.get("ORION_TOPE", "0"))
 
 fn procesar(t) {
@@ -34,9 +33,7 @@ fn procesar(t) {
     error("tipo de trabajo desconocido: " + t["tipo"])
 }
 
--- Cuando la cola se rinde con un informe, el panel tiene que enterarse: si
--- no, se quedaría "pendiente" para siempre esperando a un worker que ya no
--- lo va a intentar.
+-- Si un informe agota sus intentos, se marca como fallido para que el panel lo muestre.
 fn rendirse(t, mensaje) {
     if t["tipo"] == "informe" {
         attempt {
@@ -59,15 +56,13 @@ latido = tw.clock()
 cobros = tw.clock()
 
 while yes {
-    -- De vez en cuando, devolver a la cola lo que quedó atascado en un worker
-    -- que murió a medias.
+    -- Cada minuto, devuelve a la cola los trabajos de workers detenidos.
     if tw.elapsed(rescate) > 60.0 {
         cola.rescatar(5)
         rescate = tw.clock()
     }
 
-    -- Cada 30 s: devolver el stock de lo que no se pagó a tiempo y preguntar a
-    -- la pasarela por los pagos cuyo aviso no llegó.
+    -- Cada 30 s: caduca pedidos sin pagar y concilia pagos con la pasarela.
     if tw.elapsed(cobros) > 30.0 {
         attempt {
             n = pagos.caducar()
@@ -84,8 +79,7 @@ while yes {
         cobros = tw.clock()
     }
 
-    -- Señal de vida cada 5 s, no en cada vuelta: con la cola vacía el bucle
-    -- da dos vueltas por segundo.
+    -- Señal de vida cada 5 s, no en cada vuelta del bucle.
     if tw.elapsed(latido) > 5.0 {
         monitor.latido(NOMBRE, "worker")
         latido = tw.clock()
@@ -94,9 +88,7 @@ while yes {
     t = cola.tomar(NOMBRE)
 
     if t == null {
-        -- Con TOPE puesto, la cola vacía significa "ya está": es el modo de
-        -- las pruebas. Sin TOPE, el worker espera trabajo indefinidamente,
-        -- que es lo que hace en un servidor.
+        -- Con TOPE, la cola vacía termina el worker (pruebas). Sin TOPE, espera indefinidamente.
         if TOPE > 0 {
             break
         }

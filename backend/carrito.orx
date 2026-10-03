@@ -1,8 +1,8 @@
--- Carrito: una línea por producto, con la cantidad.
+-- Carrito: una línea por producto, con su cantidad.
 use "db" as db
 use "backend/config" as config
 
--- Cada usuario tiene un carrito; se crea la primera vez que añade algo.
+-- Un carrito por usuario; se crea al añadir el primer producto.
 fn carrito_de(usuario_id) {
     c = db.first(config.BD, "SELECT id FROM carritos WHERE usuario_id = ? ORDER BY id LIMIT 1", [usuario_id])
     if c != null {
@@ -33,8 +33,7 @@ fn resumen(usuario_id) {
     return { "unidades": r["unidades"], "total": r["total"], "lineas": lineas(usuario_id) }
 }
 
--- Añadir dos veces el mismo producto suma cantidad en vez de crear otra fila:
--- lo resuelve el UNIQUE (carrito_id, producto_id) del esquema.
+-- Si el producto ya está en el carrito, suma la cantidad (UNIQUE carrito_id, producto_id).
 fn agregar(usuario_id, producto_id, cantidad) {
     if cantidad < 1 {
         return { "ok": no, "error": "la cantidad tiene que ser al menos 1" }
@@ -51,9 +50,7 @@ fn agregar(usuario_id, producto_id, cantidad) {
         pedidas = ya["cantidad"] + cantidad
     }
 
-    -- Aviso temprano para no dejar que alguien llene el carrito de algo que no
-    -- hay. El control que de verdad manda es el del checkout: entre este
-    -- momento y el pago, otro puede haberse llevado las últimas unidades.
+    -- Validación previa para el usuario. La comprobación definitiva del stock la hace el checkout.
     if pedidas > p["stock"] {
         return { "ok": no, "error": "solo quedan " + str(p["stock"]) + " unidades" }
     }
@@ -67,8 +64,7 @@ fn agregar(usuario_id, producto_id, cantidad) {
     return { "ok": yes, "error": "" }
 }
 
--- Fija la cantidad de una línea. Como al añadir, el stock es solo un aviso:
--- quien decide es el checkout.
+-- Cambia la cantidad de una línea. El stock se valida de nuevo en el checkout.
 fn cambiar(usuario_id, linea_id, cantidad) {
     if cantidad < 1 {
         return { "ok": no, "error": "la cantidad tiene que ser al menos 1" }

@@ -1,4 +1,4 @@
--- La pasarela como servicio aparte: `orion run pasarela/main.orx`.
+-- La pasarela como servicio independiente: `orion run pasarela/main.orx`.
 use "router" as router
 use "json" as json
 use "env" as entorno

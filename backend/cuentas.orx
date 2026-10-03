@@ -1,4 +1,4 @@
--- Cuentas: registro, acceso y tokens.
+-- Cuentas: registro, login y tokens JWT.
 use "db" as db
 use "auth" as auth
 use "validate" as valida
@@ -6,7 +6,7 @@ use "backend/config" as config
 
 MIN_PASS = 8
 
--- Devuelve { ok, error } para que el handler decida el código HTTP.
+-- Devuelve { ok, error }; el handler decide el código HTTP.
 fn revisar_datos(email, pass, nombre) {
     if not valida.email(email) {
         return { "ok": no, "error": "ese email no tiene buena pinta" }
@@ -33,7 +33,7 @@ fn registrar(email, pass, nombre) {
         return { "ok": no, "error": "ya hay una cuenta con ese email" }
     }
 
-    -- Se guarda el hash argon2id, nunca la contraseña. Ni yo puedo leerla.
+    -- Solo se guarda el hash argon2id de la contraseña.
     id = db.insert(config.BD,
         "INSERT INTO usuarios (email, hash_pass, nombre) VALUES (?, ?, ?) RETURNING id",
         [email.lower(), auth.hash(pass), nombre.trim()])
@@ -45,8 +45,8 @@ fn login(email, pass) {
     u = db.first(config.BD,
         "SELECT id, email, nombre, rol, hash_pass FROM usuarios WHERE email = ?", [email.lower()])
 
-    -- El mismo mensaje si el email no existe o si la contraseña falla: decir
-    -- cuál de las dos es regala una lista de emails registrados.
+    -- Mismo mensaje si el email no existe o la contraseña es incorrecta,
+    -- para no revelar qué emails están registrados.
     if u == null or not auth.verify(pass, u["hash_pass"]) {
         return { "ok": no, "error": "email o contraseña incorrectos" }
     }
@@ -65,7 +65,7 @@ fn emitir_token(u) {
         config.JWT_HORAS * 3600)
 }
 
--- El id del usuario sale del token que ya validó router.guard.
+-- El id del usuario viene del JWT, ya validado por router.guard.
 fn id_de(req) {
     if not has_key(req, "user") {
         return 0

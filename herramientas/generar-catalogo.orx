@@ -1,5 +1,5 @@
--- Catálogo de prueba: `orion run herramientas/generar-catalogo.orx 1000000 ruta.csv`.
--- Cada nombre lleva un código único (KX123456) para buscar una aguja en el pajar.
+-- Genera un catálogo de prueba: `orion run herramientas/generar-catalogo.orx 1000000 ruta.csv`.
+-- Cada nombre lleva un código único (KX123456) para medir búsquedas de un solo resultado.
 use "fs" as fs
 use "process" as proceso
 use "timewarp" as tw
@@ -38,8 +38,7 @@ fn centimos(c) {
 reloj = tw.clock()
 fs.write(RUTA, "sku,nombre,descripcion,categoria,precio,stock\n")
 
--- Se escribe por trozos de 10.000 filas: ni una llamada al disco por fila, ni
--- el millón entero en memoria.
+-- Escribe en bloques de 10.000 filas: ni una escritura por fila ni todo en memoria.
 trozo = []
 i = 1
 while i <= N {

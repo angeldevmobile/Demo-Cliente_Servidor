@@ -1,8 +1,5 @@
-# Blueprint de Render: New > Blueprint > este repositorio.
-#
-# Plan gratuito: una instancia web con el worker dentro del mismo contenedor
-# (Render no da workers gratis). Funciona porque la cola y los informes viven
-# en Postgres, no en el proceso.
+# Blueprint de Render (New > Blueprint). Plan gratuito: web y worker en el mismo contenedor;
+# funciona porque la cola y los archivos están en Postgres.
 
 databases:
   - name: comercio-db
@@ -19,22 +16,21 @@ services:
     # Render no interpreta comillas en dockerCommand: el arranque va en un script.
     dockerCommand: sh despliegue/arranque.sh
     envVars:
-      # URL interna: no sale de la red de Render, así que va sin TLS.
+      # URL interna de la base: no sale de la red de Render, va sin TLS.
       - key: ORION_BD
         fromDatabase:
           name: comercio-db
           property: connectionString
       - key: ORION_JWT
         generateValue: true
-      # Los pide Render al crear el Blueprint. La contraseña de juguete del
-      # README está publicada: aquí va una nueva.
+      # Render los pide al crear el Blueprint. Usa una contraseña nueva, no la del README.
       - key: ORION_ADMIN_EMAIL
         sync: false
       - key: ORION_ADMIN_PASS
         sync: false
       - key: ORION_INSTANCIA
         value: render-web
-      # La pasarela simulada va dentro del mismo proceso (sin ORION_PASARELA_URL).
+      # La pasarela simulada va en el mismo proceso (sin ORION_PASARELA_URL).
       - key: ORION_PASARELA_CLAVE
         generateValue: true
       - key: ORION_PASARELA_SECRETO

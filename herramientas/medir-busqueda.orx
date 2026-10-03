@@ -1,5 +1,4 @@
--- Mide la búsqueda: ILIKE contra texto completo, con la consulta de la tienda y
--- el tiempo de EXPLAIN ANALYZE (mediana de varias repeticiones).
+-- Compara ILIKE con texto completo usando EXPLAIN ANALYZE (mediana de varias ejecuciones).
 -- Uso: `orion run herramientas/medir-busqueda.orx`
 use "db" as db
 use "regex" as regex
@@ -35,7 +34,7 @@ fn ilike(termino) {
     return milisegundos(BASE + " AND (nombre ILIKE ? OR descripcion ILIKE ? OR sku ILIKE ?)" + ORDEN, [p, p, p])
 }
 
--- La consulta exacta de la tienda.
+-- La misma consulta que usa la tienda.
 fn texto_completo(termino) {
     c = catalogo.consulta(termino, "", 60)
     return milisegundos(c[0], c[1])
@@ -52,8 +51,7 @@ generados = db.first(config.BD, "SELECT COUNT(*) AS n FROM productos WHERE sku L
 show "Catálogo: " + str(total) + " productos activos"
 show ""
 
--- Una aguja (un código de modelo que existe una vez), un término común y dos
--- palabras de un producto real (tipo y marca).
+-- Términos de prueba: un código único (1 resultado), uno común y dos palabras de un producto.
 terminos = ["auriculares"]
 if generados > 0 {
     nombre = db.first(config.BD, "SELECT nombre FROM productos WHERE sku = ?",

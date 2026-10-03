@@ -1,5 +1,4 @@
--- Informes de ventas en Excel y PDF, generados por Orion sin librerías de
--- fuera. Los genera el worker (ver worker.orx) y los sirve la web.
+-- Informes de ventas en Excel y PDF. Los genera el worker y los sirve la web.
 use "db" as db
 use "fs" as fs
 use "excel" as excel
@@ -9,12 +8,10 @@ use "crypto" as crypto
 use "backend/config" as config
 use "backend/pedidos" as pedidos
 
--- Lo que se considera una venta: un pedido pagado (o ya enviado o entregado).
+-- Cuenta como venta un pedido pagado, enviado o entregado.
 VENTA = "p.estado IN " + pedidos.ESTADOS_VENTA + " AND p.creado >= (?::text)::date AND p.creado < (?::text)::date + 1"
 
--- Todas las cifras salen sumadas de Postgres, en NUMERIC. Orion solo las
--- coloca: sumar dinero en coma flotante es la forma clásica de que un informe
--- no cuadre con la caja por un céntimo.
+-- Las sumas las hace Postgres en NUMERIC; Orion no suma dinero en coma flotante.
 fn datos(desde, hasta) {
     total = db.first(config.BD, "
         SELECT COUNT(*) AS pedidos,
@@ -22,8 +19,7 @@ fn datos(desde, hasta) {
                COALESCE(SUM((SELECT SUM(cantidad) FROM pedido_items WHERE pedido_id = p.id)), 0) AS unidades
         FROM pedidos p WHERE " + VENTA, [desde, hasta])
 
-    -- generate_series pone también los días sin ventas: un hueco en la
-    -- serie es información, y una gráfica hecha desde esta hoja lo necesita.
+    -- generate_series incluye también los días sin ventas.
     por_dia = db.query(config.BD, "
         SELECT to_char(d, 'YYYY-MM-DD') AS \"Fecha\",
                COUNT(p.id) AS \"Pedidos\",
@@ -34,8 +30,7 @@ fn datos(desde, hasta) {
                            AND p.estado IN " + pedidos.ESTADOS_VENTA + "
         GROUP BY d ORDER BY d", [desde, hasta])
 
-    -- El importe sale del precio de la LÍNEA, no del de la ficha: si el
-    -- precio cambió después de la venta, el informe dice lo que se cobró.
+    -- El importe usa el precio guardado en cada línea, no el actual del producto.
     por_producto = db.query(config.BD, "
         SELECT pr.sku AS \"SKU\", pr.nombre AS \"Producto\", pr.categoria AS \"Categoría\",
                SUM(i.cantidad) AS \"Unidades\",
@@ -69,8 +64,7 @@ fn ticket_medio(total) {
     return total["importe"] / total["pedidos"]
 }
 
--- Cuatro hojas: el resumen y el detalle del que sale. Quien lo abre puede
--- rehacer cualquier cifra del resumen a partir de las otras hojas.
+-- Cuatro hojas: resumen, por día, por producto y pedidos.
 fn excel_de(ruta, d) {
     t = d["total"]
     resumen = [
@@ -90,8 +84,7 @@ fn excel_de(ruta, d) {
     })
 }
 
--- El PDF lleva el resumen y las ventas por producto y por día; la lista de
--- pedidos va solo en el Excel. El color, el de la marca (ORION_COLOR_MARCA).
+-- El PDF incluye el resumen y las ventas por producto y día; los pedidos van solo en Excel.
 ACENTO = config.COLOR_MARCA
 
 fn pdf_de(ruta, d) {
@@ -129,8 +122,7 @@ fn pdf_de(ruta, d) {
                                "author": "Comercio", "subject": "Informe de ventas" })
 }
 
--- Lo llama el worker. Genera el archivo en un temporal, lo guarda en la base
--- y borra el temporal: el disco del worker no guarda nada que importe.
+-- Genera el archivo en un temporal, lo guarda en la base y borra el temporal.
 fn generar(informe_id) {
     inf = db.first(config.BD, "
         SELECT id, formato, to_char(desde, 'YYYY-MM-DD') AS desde, to_char(hasta, 'YYYY-MM-DD') AS hasta
@@ -148,7 +140,7 @@ fn generar(informe_id) {
         pdf_de(ruta, d)
     }
 
-    -- El archivo viaja en base64 y Postgres lo guarda en binario (BYTEA).
+    -- El archivo se pasa en base64 y Postgres lo guarda como BYTEA.
     b64 = fs.read_b64(ruta)
     db.exec(config.BD, "UPDATE informes
                         SET contenido = decode(?, 'base64'), bytes = ?, estado = 'listo',
@@ -167,8 +159,7 @@ TIPOS = {
     "pdf":  "application/pdf"
 }
 
--- `serve` sirve archivos del disco: cada instancia baja el informe de Postgres
--- la primera vez y lo reutiliza, porque un informe listo ya no cambia.
+-- serve sirve archivos de disco: se escribe la primera vez y se reutiliza.
 fn descargar(id) {
     inf = db.first(config.BD, "
         SELECT id, formato, to_char(desde, 'YYYY-MM-DD') AS desde, to_char(hasta, 'YYYY-MM-DD') AS hasta
@@ -180,8 +171,7 @@ fn descargar(id) {
     ruta = fs.join(config.TMP, "informe-" + str(id) + "." + inf["formato"])
     if not fs.exists(ruta) {
         fila = db.first(config.BD, "SELECT contenido FROM informes WHERE id = ?", [id])
-        -- Se escribe con otro nombre y se renombra: dos descargas a la vez
-        -- en la misma instancia nunca ven un archivo a medio escribir.
+        -- Se escribe con otro nombre y se renombra, para no servir un archivo a medio escribir.
         parcial = ruta + "." + crypto.uuid()
         fs.write_b64(parcial, fila["contenido"])
         fs.move(parcial, ruta)

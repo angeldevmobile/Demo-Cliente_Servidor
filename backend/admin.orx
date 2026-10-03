@@ -1,5 +1,5 @@
--- Panel de administración: productos, stock, pedidos e informes. El rol lo
--- comprueba el middleware de main.orx; aquí solo hay reglas de negocio.
+-- Panel de administración: productos, stock, pedidos e informes.
+-- El rol admin lo valida el middleware de main.orx.
 use "db" as db
 use "backend/config" as config
 use "backend/catalogo" as catalogo
@@ -9,8 +9,7 @@ CATEGORIA_MAX = 40
 
 --   Productos
 
--- A diferencia del catálogo de la tienda, aquí salen también los inactivos:
--- un producto retirado sigue existiendo, y hay que poder reactivarlo.
+-- A diferencia de la tienda, incluye los productos inactivos para poder reactivarlos.
 fn productos(busqueda, limite) {
     tope = 100
     if limite > 0 and limite <= 500 {
@@ -33,8 +32,7 @@ fn texto(d, clave) {
     return str(d[clave]).trim()
 }
 
--- Revisa los campos que vengan. `completo` exige todos (alta); sin él, solo
--- se revisan los presentes (edición parcial).
+-- Valida los campos. Con `completo` exige todos (alta); sin él, solo los enviados (edición).
 fn revisar(d, completo) {
     for campo in ["sku", "nombre", "categoria"] {
         if (completo or has_key(d, campo)) and texto(d, campo) == "" {
@@ -86,7 +84,7 @@ fn crear_producto(d) {
             [sku, texto(d, "nombre"), texto(d, "descripcion"),
              texto(d, "categoria").lower(), float(d["precio"]), stock])
     } handle err {
-        -- 23505: el UNIQUE de `sku` es quien impide el duplicado.
+        -- 23505: el SKU ya existe (restricción UNIQUE).
         if str(err).contains("SQLSTATE 23505") {
             return { "ok": no, "error": "ya hay un producto con el SKU " + sku }
         }
@@ -95,8 +93,8 @@ fn crear_producto(d) {
     return { "ok": yes, "error": "", "producto": por_id(id) }
 }
 
--- Edición parcial: cambia solo lo que venga. El stock se ajusta aparte, y
--- cambiar el precio no toca los pedidos (cada línea guarda el suyo).
+-- Edición parcial: actualiza solo los campos enviados.
+-- El precio nuevo no afecta a pedidos anteriores: cada línea guarda el suyo.
 fn editar_producto(id, d) {
     if type(d) != "dict" {
         return { "ok": no, "error": "faltan los datos del producto" }
@@ -138,8 +136,8 @@ fn editar_producto(id, d) {
     return { "ok": yes, "error": "", "producto": por_id(id) }
 }
 
--- El stock se ajusta (+5, -2), no se fija: fijarlo se comería las ventas
--- hechas desde que se cargó la página. Bajo cero lo para el CHECK del esquema.
+-- El stock se suma o resta (delta), no se fija, para no pisar ventas hechas mientras tanto.
+-- El CHECK (stock >= 0) impide dejarlo negativo.
 fn ajustar_stock(id, delta) {
     if delta == 0 {
         return { "ok": no, "error": "el ajuste no puede ser cero" }
@@ -148,7 +146,7 @@ fn ajustar_stock(id, delta) {
         fila = db.first(config.BD, "UPDATE productos SET stock = stock + ? WHERE id = ? RETURNING stock",
                         [delta, id])
     } handle err {
-        -- 23514: el CHECK (stock >= 0) del esquema.
+        -- 23514: violación del CHECK (stock >= 0).
         if str(err).contains("SQLSTATE 23514") {
             return { "ok": no, "error": "no hay tantas unidades para quitar" }
         }
@@ -167,9 +165,8 @@ fn por_id(id) {
 
 --   Pedidos
 
--- De qué estado se puede llegar a cada uno. Un pedido entregado no se
--- cancela desde aquí (eso es una devolución, otro proceso), y uno enviado
--- tampoco: el paquete ya salió.
+-- Estado de origen permitido para cada transición.
+-- Un pedido enviado o entregado ya no se puede cancelar.
 DESDE = { "enviado": "pagado", "entregado": "enviado", "cancelado": "pagado" }
 
 fn pedidos(estado, limite) {
@@ -192,9 +189,7 @@ fn pedidos(estado, limite) {
     return db.query(config.BD, sql + " ORDER BY p.id DESC LIMIT " + str(tope), params)
 }
 
--- El estado de partida va en el WHERE: si dos personas del panel pulsan a la
--- vez "enviado" y "cancelado", solo una de las dos transiciones encuentra la
--- fila en 'pagado'. La otra no toca nada y se entera.
+-- El estado de origen va en el WHERE: si dos administradores actúan a la vez, solo una transición se aplica.
 fn cambiar_estado(id, hacia) {
     if not has_key(DESDE, hacia) {
         return { "ok": no, "error": "estado desconocido: " + hacia }
@@ -210,8 +205,7 @@ fn cambiar_estado(id, hacia) {
     return { "ok": yes, "error": "" }
 }
 
--- Cancelar y reponer el stock en una sola sentencia (WITH con dos UPDATE): o
--- las dos cosas o ninguna. Si el pedido ya no estaba pagado, no repone nada.
+-- Cancela y repone el stock en una sola sentencia (WITH): se aplican las dos cosas o ninguna.
 fn cancelar(id) {
     r = db.first(config.BD, "
         WITH c AS (
@@ -254,8 +248,7 @@ fn resumen() {
 FORMATOS = ["xlsx", "pdf"]
 MAX_DIAS = 366
 
--- Pedir un informe lo encola, no lo genera. Informe y trabajo se crean en una
--- sola sentencia, así nunca queda un informe pendiente sin trabajo que lo haga.
+-- Crea el informe y su trabajo en la cola en una sola sentencia; lo genera el worker.
 fn pedir_informe(usuario_id, formato, desde, hasta) {
     if not FORMATOS.contains(formato) {
         return { "ok": no, "error": "el formato tiene que ser xlsx o pdf" }
@@ -286,7 +279,7 @@ fn pedir_informe(usuario_id, formato, desde, hasta) {
     return { "ok": yes, "error": "", "id": fila["id"] }
 }
 
--- Sin `contenido`: la lista no tiene por qué arrastrar los archivos.
+-- La lista no incluye el archivo (`contenido`) para no cargarlo sin necesidad.
 fn informes() {
     return db.query(config.BD, "
         SELECT id, formato, to_char(desde, 'YYYY-MM-DD') AS desde, to_char(hasta, 'YYYY-MM-DD') AS hasta,

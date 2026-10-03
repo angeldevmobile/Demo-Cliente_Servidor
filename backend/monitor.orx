@@ -1,5 +1,5 @@
--- Monitor: los procesos vivos, la cola en marcha, la carrera por la última
--- unidad y la búsqueda medida. Es lo que enseña /monitor.html.
+-- Monitor: procesos, cola de trabajos, carrera por la última unidad y búsqueda medida.
+-- Datos de /monitor.html.
 use "db" as db
 use "auth" as auth
 use "crypto" as crypto
@@ -17,8 +17,8 @@ MAX_COMPRADORES = 6
 
 --   Procesos
 
--- Cada proceso anota su versión de Orion, su PID y su memoria. Las instancias
--- web lo hacen al atender esta página; los workers, en su bucle.
+-- Registra versión de Orion, PID y memoria del proceso. Las instancias web lo hacen
+-- al responder al monitor; los workers, en su bucle.
 fn latido(nombre, tipo) {
     m = proceso.memory()
     rss = 0
@@ -36,8 +36,7 @@ fn latido(nombre, tipo) {
             [nombre, tipo, proceso.version(), proceso.pid(), str(proceso.uptime()), rss, pico])
 }
 
--- Sin señal en 2 minutos, el proceso está muerto: un reinicio o una prueba
--- antigua. La página pregunta cada 2 s, así que las web vivas nunca llegan.
+-- Un proceso sin señal en 2 minutos se considera detenido y no se muestra.
 fn procesos() {
     return db.query(config.BD, "
         SELECT nombre, tipo, version, pid, rss, pico,
@@ -59,8 +58,7 @@ fn trabajos() {
         FROM trabajos ORDER BY id DESC LIMIT 12")
 }
 
--- Quién hizo cuánto en las últimas 24 h: el reparto entre workers sale de la
--- propia cola.
+-- Trabajos hechos por cada worker en las últimas 24 h.
 fn por_worker() {
     return db.query(config.BD, "
         SELECT tomado_por AS worker, COUNT(*)::int AS hechos,
@@ -83,11 +81,10 @@ fn estado(instancia) {
     }
 }
 
---   La carrera: N compradores, una unidad
+--   La carrera: varios compradores, una unidad
 
--- Deja el producto con stock 1 y a cada comprador con esa unidad en el
--- carrito. Las compras las lanza el navegador a la vez, a través del
--- balanceador, así que llegan a instancias distintas.
+-- Deja el producto con stock 1 y esa unidad en el carrito de cada comprador.
+-- El navegador lanza las compras a la vez y el balanceador las reparte.
 fn preparar_carrera(compradores) {
     n = compradores
     if n < 2 {
@@ -97,14 +94,14 @@ fn preparar_carrera(compradores) {
         n = MAX_COMPRADORES
     }
 
-    -- Inactivo y a 0 €: no sale en la tienda ni cambia las ventas.
+    -- Producto inactivo y a 0 €: no aparece en la tienda ni cuenta en las ventas.
     pid = db.insert(config.BD, "
         INSERT INTO productos (sku, nombre, descripcion, categoria, precio, stock, activo)
         VALUES (?, 'La última unidad', 'Producto de la carrera de /monitor.html', 'monitor', 0, 1, false)
         ON CONFLICT (sku) DO UPDATE SET stock = 1, descripcion = EXCLUDED.descripcion, categoria = EXCLUDED.categoria
         RETURNING id", [SKU_CARRERA])
 
-    -- Fuera la carrera anterior: su pedido y su factura pendiente, si la hay.
+    -- Borra la carrera anterior: su pedido y su factura pendiente.
     anteriores = "SELECT pedido_id FROM pedido_items WHERE producto_id = ?"
     db.exec(config.BD, "DELETE FROM trabajos
                         WHERE tipo = 'factura' AND estado = 'pendiente'
@@ -122,8 +119,7 @@ fn preparar_carrera(compradores) {
     return { "stock": 1, "compradores": fuera }
 }
 
--- Cuentas de la carrera. Su contraseña es un uuid que nadie conoce: solo se
--- usan con el token que devuelve preparar_carrera.
+-- Cuentas de la carrera. La contraseña es un UUID aleatorio: solo se usan con el token.
 fn comprador(n) {
     email = "comprador-" + str(n) + "@carrera.test"
     sql = "SELECT id, email, nombre, rol FROM usuarios WHERE email = ?"
@@ -147,8 +143,8 @@ fn resultado_carrera() {
 
 --   Búsqueda medida
 
--- La consulta real de la tienda frente a ILIKE, con el tiempo que da
--- EXPLAIN ANALYZE y los nodos del plan: se ve si usa el índice o no.
+-- Compara la consulta de la tienda con ILIKE usando EXPLAIN ANALYZE:
+-- tiempo y si usa el índice.
 fn medir_busqueda(termino) {
     t = termino.trim()
     if t == "" {

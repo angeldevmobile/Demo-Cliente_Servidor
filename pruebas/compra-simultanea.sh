@@ -1,12 +1,6 @@
 #!/usr/bin/env bash
-#
-# Seis compradores, una sola unidad. O se vende una, o ninguna. Nunca dos.
-#
-#   bash pruebas/compra-simultanea.sh [url]
-#
-# Deja el producto de prueba con stock 1, mete una unidad en seis carritos y
-# lanza los seis checkouts a la vez. Comprueba que se creo exactamente un
-# pedido, que se vendio exactamente una unidad y que el stock quedo en cero.
+# Seis compras simultáneas de un producto con stock 1: debe venderse exactamente una unidad.
+# Uso: bash pruebas/compra-simultanea.sh [url]
 set -euo pipefail
 
 BASE="${1:-http://127.0.0.1:8083}"
@@ -20,14 +14,13 @@ sql()  { docker exec comercio-db psql -U comercio -d comercio -tAc "$1" | tr -d 
 
 echo "Tienda: $BASE"
 
-# El stock se deja en 1: la prueba parte de un estado conocido, no de lo que
-# haya quedado de la vez anterior.
+# Parte de un estado conocido: stock 1.
 sql "UPDATE productos SET stock = 1 WHERE sku = '$SKU'" >/dev/null
 echo "Stock de $SKU puesto a 1"
 
 PRODUCTO=$(curl -s "$BASE/api/productos/$SKU" | json "['id']")
 
-# Marca de agua: los pedidos anteriores a esta pasada no cuentan.
+# Solo cuentan los pedidos creados en esta ejecución.
 ANTES=$(sql "SELECT COALESCE(MAX(id),0) FROM pedidos")
 
 for i in $(seq 1 6); do

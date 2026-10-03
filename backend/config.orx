@@ -1,50 +1,44 @@
--- Configuración: todo lo que cambia entre tu máquina y un servidor.
+-- Configuración leída de variables de entorno.
 use "env" as entorno
 
 PORT = int(entorno.get("PORT", "8083"))
 
--- Por defecto, el Postgres del docker-compose de esta carpeta (puerto 5433).
+-- Por defecto, el Postgres del docker-compose (puerto 5433).
 BD = entorno.get("ORION_BD", "postgres://comercio:comercio@127.0.0.1:5433/comercio")
 
 FRONTEND = entorno.get("ORION_FRONTEND", "frontend")
 
--- Quién es esta instancia. Con un balanceador delante, es lo que permite ver
--- a qué proceso fue cada petición.
+-- Nombre de esta instancia; con varias detrás del balanceador, identifica quién atendió.
 INSTANCIA = entorno.get("ORION_INSTANCIA", "local")
 
--- Quien tenga este secreto puede firmar un token válido para cualquier
--- usuario: en un servidor de verdad va por entorno y no se comparte.
+-- Secreto de firma de los JWT. En producción debe venir del entorno.
 JWT_SECRETO = entorno.get("ORION_JWT", "cambia-esto-en-produccion")
 JWT_HORAS   = int(entorno.get("ORION_JWT_HORAS", "12"))
 
--- La cuenta de administración que se siembra al arrancar. Registrarse siempre
--- da rol `cliente`: la única puerta al rol `admin` es esta.
+-- Cuenta de administración que se crea al arrancar. El registro público siempre da rol `cliente`.
 ADMIN_EMAIL = entorno.get("ORION_ADMIN_EMAIL", "admin@comercio.test")
 ADMIN_PASS  = entorno.get("ORION_ADMIN_PASS", "admin-de-juguete")
 
--- Carpeta para archivos de paso: informes a medio generar y copias locales de
--- los ya generados. Lo que vale está en Postgres; esto se puede borrar.
+-- Carpeta para archivos temporales (informes y facturas). Lo importante está en Postgres.
 TMP = entorno.get("ORION_TMP", "tmp")
 
--- Pago. URL_INTERNA es desde donde otros servicios llaman a esta tienda (el
--- webhook de la pasarela): en el compose, el balanceador; solo, este proceso.
+-- URL con la que otros servicios llaman a esta tienda (el aviso de la pasarela).
+-- En el compose es el balanceador; en un solo proceso, este mismo.
 URL_INTERNA = entorno.get("ORION_URL_INTERNA", "http://127.0.0.1:" + str(PORT))
 
--- Sin ORION_PASARELA_URL, la pasarela simulada se monta en este mismo
--- servidor bajo /pasarela (un solo proceso, como en Render).
+-- Sin ORION_PASARELA_URL, la pasarela simulada se monta en este servidor bajo /pasarela.
 PASARELA_URL       = entorno.get("ORION_PASARELA_URL", URL_INTERNA + "/pasarela")
 PASARELA_INTEGRADA = entorno.get("ORION_PASARELA_URL", "") == ""
 
--- La clave con la que la tienda se identifica ante la pasarela, y el secreto
--- con el que la pasarela firma sus avisos. Los dos lados tienen que coincidir.
+-- Clave de la tienda ante la pasarela y secreto de firma de los avisos.
+-- Deben coincidir en ambos servicios.
 PASARELA_CLAVE   = entorno.get("ORION_PASARELA_CLAVE", "clave-de-desarrollo")
 PASARELA_SECRETO = entorno.get("ORION_PASARELA_SECRETO", "secreto-de-desarrollo")
 
--- Cuánto se guarda el stock de un pedido sin pagar antes de devolverlo.
+-- Minutos que se reserva el stock de un pedido sin pagar.
 PAGO_MINUTOS = int(entorno.get("ORION_PAGO_MINUTOS", "15"))
 
--- Correo. Sin ORION_SMTP_HOST no se manda nada: la factura queda para
--- descargar desde "Mis pedidos".
+-- SMTP para enviar facturas. Sin ORION_SMTP_HOST no se envía correo.
 SMTP = {
     "servidor":  entorno.get("ORION_SMTP_HOST", ""),
     "puerto":    int(entorno.get("ORION_SMTP_PUERTO", "587")),
@@ -54,5 +48,5 @@ SMTP = {
 }
 CORREO_DE = entorno.get("ORION_CORREO_DE", "Comercio <tienda@comercio.test>")
 
--- El color de la marca en las facturas y los informes.
+-- Color de la marca en facturas e informes.
 COLOR_MARCA = entorno.get("ORION_COLOR_MARCA", "#1f6f4a")

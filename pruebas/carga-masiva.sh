@@ -1,12 +1,6 @@
 #!/usr/bin/env bash
-#
-# Un millón de productos: genera el CSV, lo importa midiendo tiempo y RAM, y
-# compara la búsqueda con ILIKE y con texto completo.
-#
-#   bash pruebas/carga-masiva.sh [filas]     (por defecto 1000000)
-#   bash pruebas/carga-masiva.sh limpiar     quita los productos generados
-#
-# El pico de RAM se mide con Python + psutil (pip install psutil).
+# Genera un catálogo, lo importa midiendo tiempo y RAM, y compara ILIKE con texto completo.
+# Uso: bash pruebas/carga-masiva.sh [filas | limpiar]  (la RAM se mide con Python + psutil)
 set -euo pipefail
 
 ORION="${ORION:-orion}"
@@ -14,7 +8,7 @@ export ORION_BD="${ORION_BD:-postgres://comercio:comercio@127.0.0.1:5433/comerci
 sql() { docker exec comercio-db psql -U comercio -d comercio -tAc "$1"; }
 
 if [ "${1:-}" = "limpiar" ]; then
-  # Los que ya se vendieron o están en un carrito no se pueden borrar: se retiran.
+  # Los productos ya vendidos o en un carrito no se pueden borrar: se desactivan.
   sql "UPDATE productos SET activo = false WHERE sku LIKE 'GEN-%'
        AND (id IN (SELECT producto_id FROM pedido_items) OR id IN (SELECT producto_id FROM lineas))" >/dev/null
   borrados=$(sql "WITH b AS (DELETE FROM productos WHERE sku LIKE 'GEN-%' AND activo RETURNING 1) SELECT COUNT(*) FROM b")

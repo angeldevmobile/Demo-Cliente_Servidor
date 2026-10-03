@@ -32,7 +32,7 @@ function duracion(s) {
   return `${Math.floor(s / 86400)} d`;
 }
 
-// La instancia sale de la cabecera que pone Orion en cada respuesta JSON.
+// La instancia que respondió viene en la cabecera X-Orion-Instancia.
 async function pedir(ruta, opciones) {
   const t0 = performance.now();
   const r = await fetch(ruta, opciones);
@@ -50,7 +50,7 @@ function pintarProcesos(lista, quien) {
     return;
   }
   $("procesos").innerHTML = lista.map((p) => {
-    // Las web se refrescan cuando las atiende esta página; los workers, cada 5 s.
+    // Las instancias web se actualizan al atender esta página; los workers, cada 5 s.
     const vivo = p.sin_senal_s < (p.tipo === "web" ? 30 : 15);
     const marca = p.nombre === quien ? `<span class="te-atendio">te acaba de atender</span>` : "";
     return `
@@ -152,7 +152,7 @@ $("lanzar").addEventListener("click", async () => {
     });
     if (!prep.r.ok) throw new Error(prep.datos.error || `error ${prep.r.status}`);
 
-    // Todas las compras en el mismo instante: ninguna espera a la anterior.
+    // Lanza todas las compras a la vez con Promise.all.
     const compras = await Promise.all(prep.datos.compradores.map((c) =>
       pedir("/api/checkout", { method: "POST", headers: { Authorization: "Bearer " + c.token } })
         .then((x) => ({ ...x, nombre: c.nombre }))));

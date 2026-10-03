@@ -1,11 +1,6 @@
 #!/usr/bin/env bash
-#
-# Treinta trabajos, tres workers a la vez. Cada trabajo se procesa una vez.
-#
-#   bash pruebas/cola-paralela.sh [n_trabajos]
-#
-# Si la reclamacion no fuera atomica, dos workers se llevarian el mismo
-# trabajo: se veria en los intentos (mayores que 1) o en trabajos sin terminar.
+# Tres workers procesan N trabajos a la vez; cada trabajo debe procesarse una sola vez.
+# Uso: bash pruebas/cola-paralela.sh [n_trabajos]
 set -euo pipefail
 
 N="${1:-30}"
@@ -14,7 +9,7 @@ export ORION_BD="${ORION_BD:-postgres://comercio:comercio@127.0.0.1:5433/comerci
 
 sql() { docker exec comercio-db psql -U comercio -d comercio -tAc "$1" | tr -d '[:space:]'; }
 
-# Hace falta un pedido del que hacer factura; se usa el mas reciente.
+# Los trabajos de factura necesitan un pedido: se usa el más reciente.
 PEDIDO=$(sql "SELECT COALESCE(MAX(id),0) FROM pedidos")
 if [ "$PEDIDO" = "0" ]; then
   echo "No hay ningun pedido todavia: compra algo antes de lanzar esta prueba."

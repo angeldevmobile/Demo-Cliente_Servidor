@@ -1,4 +1,4 @@
--- Esquema y siembra. Idempotente: arrancar dos veces no duplica nada.
+-- Esquema y datos iniciales. Es idempotente: ejecutarlo varias veces no duplica nada.
 use "db" as db
 use "csv" as csv
 use "auth" as auth
@@ -27,22 +27,20 @@ fn crear_esquema() {
         activo      BOOLEAN NOT NULL DEFAULT true
     )", []])
 
-    -- La ficha del producto. Columnas añadidas después: ALTER para que una
-    -- base ya creada las gane sin migraciones a mano. Las características
-    -- van separadas por '|'.
+    -- Datos de la ficha. ALTER ... IF NOT EXISTS añade las columnas también a bases ya creadas.
+    -- Las características se guardan separadas por '|'.
     pasos.push(["ALTER TABLE productos
                  ADD COLUMN IF NOT EXISTS detalle TEXT NOT NULL DEFAULT '',
                  ADD COLUMN IF NOT EXISTS caracteristicas TEXT NOT NULL DEFAULT ''", []])
 
     pasos.push(["CREATE INDEX IF NOT EXISTS idx_prod_categoria ON productos (categoria)", []])
 
-    -- El orden del catálogo. Sin este índice, pedir los 60 primeros de un
-    -- millón obliga a ordenar el millón entero en cada visita.
+    -- Índice para el orden del catálogo: evita ordenar toda la tabla en cada consulta.
     pasos.push(["CREATE INDEX IF NOT EXISTS idx_prod_orden ON productos (categoria, nombre)
                         WHERE activo", []])
 
-    -- Búsqueda de texto completo: con un millón de filas, ILIKE '%texto%'
-    -- recorre la tabla entera. La columna se calcula sola en cada escritura.
+    -- Búsqueda de texto completo: columna tsvector calculada por Postgres, con índice GIN.
+    -- Evita que ILIKE '%texto%' recorra toda la tabla.
     pasos.push(["ALTER TABLE productos ADD COLUMN IF NOT EXISTS busqueda tsvector
                         GENERATED ALWAYS AS (
                             to_tsvector('spanish', sku || ' ' || nombre || ' ' || descripcion)
@@ -71,8 +69,7 @@ fn crear_esquema() {
         creado     TIMESTAMPTZ NOT NULL DEFAULT now()
     )", []])
 
-    -- El precio se copia en la línea: un pedido de ayer no puede cambiar de
-    -- importe porque hoy se haya subido el precio del producto.
+    -- La línea guarda el precio de la compra: cambios posteriores de precio no alteran el pedido.
     pasos.push(["CREATE TABLE IF NOT EXISTS pedido_items (
         id              SERIAL PRIMARY KEY,
         pedido_id       INTEGER NOT NULL REFERENCES pedidos(id) ON DELETE CASCADE,
@@ -83,8 +80,7 @@ fn crear_esquema() {
 
     pasos.push(["CREATE INDEX IF NOT EXISTS idx_items_pedido ON pedido_items (pedido_id)", []])
 
-    -- El pago: un pedido nace 'pendiente_pago' con el stock reservado hasta
-    -- `expira`; la pasarela confirma con un aviso firmado.
+    -- Pago: el pedido se crea como 'pendiente_pago' con el stock reservado hasta `expira`.
     pasos.push(["ALTER TABLE pedidos
                  ADD COLUMN IF NOT EXISTS expira      TIMESTAMPTZ,
                  ADD COLUMN IF NOT EXISTS cargo_id    TEXT,
@@ -94,7 +90,7 @@ fn crear_esquema() {
     pasos.push(["CREATE INDEX IF NOT EXISTS idx_pedidos_por_pagar ON pedidos (expira)
                  WHERE estado = 'pendiente_pago'", []])
 
-    -- Un aviso por id: la pasarela reenvía, y `veces` cuenta cuántas llegaron.
+    -- Avisos de pago recibidos. `veces` cuenta los reenvíos del mismo aviso.
     pasos.push(["CREATE TABLE IF NOT EXISTS pagos_avisos (
         id        TEXT PRIMARY KEY,
         evento    TEXT NOT NULL,
@@ -122,8 +118,7 @@ fn crear_esquema() {
         terminado    TIMESTAMPTZ
     )", []])
 
-    -- El índice es lo que hace barata la búsqueda del siguiente trabajo
-    -- cuando la tabla acumula millones de terminados.
+    -- Índice parcial sobre los pendientes: buscar el siguiente trabajo sigue siendo rápido con millones de filas.
     pasos.push(["CREATE INDEX IF NOT EXISTS idx_trabajos_pendientes
                         ON trabajos (estado, ejecutar_en, id)
                         WHERE estado = 'pendiente'", []])
@@ -136,16 +131,14 @@ fn crear_esquema() {
         creada    TIMESTAMPTZ NOT NULL DEFAULT now()
     )", []])
 
-    -- La factura en PDF y si ya se mandó por correo.
+    -- PDF de la factura y fecha de envío por correo.
     pasos.push(["ALTER TABLE facturas
                  ADD COLUMN IF NOT EXISTS pdf          BYTEA,
                  ADD COLUMN IF NOT EXISTS bytes        INTEGER,
                  ADD COLUMN IF NOT EXISTS enviada      TIMESTAMPTZ,
                  ADD COLUMN IF NOT EXISTS correo_error TEXT", []])
 
-    -- Informes de ventas. El archivo generado se guarda AQUÍ, no en el disco
-    -- del worker: el worker que lo genera y la instancia web que lo sirve son
-    -- procesos distintos, y en el compose ni siquiera comparten disco.
+    -- El archivo del informe se guarda en la base y no en disco: el worker y la web no comparten disco.
     pasos.push(["CREATE TABLE IF NOT EXISTS informes (
         id         SERIAL PRIMARY KEY,
         formato    TEXT NOT NULL CHECK (formato IN ('xlsx', 'pdf')),
@@ -161,8 +154,7 @@ fn crear_esquema() {
         CHECK (hasta >= desde)
     )", []])
 
-    -- Una fila por proceso (instancia web o worker), con su última señal de
-    -- vida: es lo que enseña /monitor.html.
+    -- Una fila por proceso (web o worker) con su última señal; la usa /monitor.html.
     pasos.push(["CREATE TABLE IF NOT EXISTS procesos (
         nombre  TEXT PRIMARY KEY,
         tipo    TEXT NOT NULL,
@@ -173,15 +165,13 @@ fn crear_esquema() {
         rss     BIGINT NOT NULL DEFAULT 0,
         pico    BIGINT NOT NULL DEFAULT 0
     )", []])
-    -- Todos los procesos crean el esquema al arrancar, y sobre una base vacía
-    -- CREATE ... IF NOT EXISTS choca si dos lo hacen a la vez (23505). El
-    -- candado deja pasar a uno; los demás esperan y ya lo encuentran hecho.
+    -- Varios procesos crean el esquema al arrancar y, a la vez, CREATE IF NOT EXISTS puede fallar.
+    -- El advisory lock hace que se ejecute de uno en uno.
     db.transaction(config.BD, [["SELECT pg_advisory_xact_lock(7311)", []]] + pasos)
 }
 
--- La cuenta de administración. Si alguien se registró antes con ese email,
--- NO se le asciende: bastaría con adelantarse al arranque registrando el
--- email del admin para quedarse con el panel.
+-- Crea la cuenta de administración. Si el email ya estaba registrado no le da el rol admin,
+-- para que nadie se apropie del panel registrándose antes.
 fn sembrar_admin(email, pass) {
     if email == "" {
         return no
@@ -189,7 +179,7 @@ fn sembrar_admin(email, pass) {
     if db.first(config.BD, "SELECT id FROM usuarios WHERE email = ?", [email.lower()]) != null {
         return no
     }
-    -- ON CONFLICT por si otra instancia lo sembró entre la consulta y aquí.
+    -- ON CONFLICT por si otra instancia la creó al mismo tiempo.
     db.exec(config.BD, "INSERT INTO usuarios (email, hash_pass, nombre, rol)
                         VALUES (?, ?, 'Administración', 'admin')
                         ON CONFLICT (email) DO NOTHING",
@@ -215,8 +205,7 @@ fn sembrar_catalogo(ruta_csv) {
     return puestos
 }
 
--- Una base sembrada antes de que existiera la ficha se queda con el detalle
--- vacío: esto lo rellena desde el CSV, sin pisar lo que ya se haya editado.
+-- Rellena el detalle de productos creados antes de existir esas columnas, sin pisar ediciones.
 fn completar_fichas(ruta_csv) {
     for p in csv.read(ruta_csv) {
         db.exec(config.BD, "UPDATE productos SET detalle = ?, caracteristicas = ?

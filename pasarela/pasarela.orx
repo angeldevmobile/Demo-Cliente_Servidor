@@ -1,9 +1,5 @@
--- Pasarela de pago simulada, al estilo de Culqi, Izipay o Mercado Pago: la
--- tienda crea un cargo, el cliente paga en la página de la pasarela y la
--- pasarela avisa a la tienda con un webhook firmado (HMAC-SHA256).
---
--- Es un servicio aparte: `orion run pasarela/main.orx`. También se puede
--- montar dentro de otro servidor con `pasarela.montar(router)`.
+-- Pasarela de pago simulada, como Culqi, Izipay o Mercado Pago. La tienda crea un cargo,
+-- el cliente paga en esta página y la pasarela avisa con un webhook firmado (HMAC-SHA256).
 use "db" as db
 use "json" as json
 use "net" as net
@@ -17,18 +13,15 @@ BD      = entorno.get("PASARELA_BD", entorno.get("ORION_BD", "postgres://comerci
 PREFIJO = entorno.get("PASARELA_PREFIJO", "/pasarela")
 PAGINA  = entorno.get("PASARELA_PAGINA", "pasarela/pagar.html")
 
--- La clave con la que se identifica la tienda y el secreto de los avisos.
+-- Clave de la tienda y secreto de firma de los avisos.
 CLAVE   = entorno.get("ORION_PASARELA_CLAVE", "clave-de-desarrollo")
 SECRETO = entorno.get("ORION_PASARELA_SECRETO", "secreto-de-desarrollo")
 
--- Cada aviso se manda esta cantidad de veces. Las pasarelas de verdad
--- reenvían; mandarlo dos veces a propósito demuestra que la tienda no lo
--- cuenta dos.
+-- Veces que se envía cada aviso. Se envía dos veces para comprobar que la tienda no lo duplica.
 ENVIOS = int(entorno.get("PASARELA_ENVIOS", "2"))
 TIMEOUT_AVISO = float(entorno.get("PASARELA_TIMEOUT", "5"))
 
--- Tarjetas de prueba que fallan, como en los sandbox reales. Cualquier otro
--- número válido (Luhn) se aprueba.
+-- Tarjetas de prueba que fallan. Cualquier otro número válido (Luhn) se aprueba.
 FALLAN = {
     "4000000000000002": "tarjeta rechazada por el banco",
     "4000000000009995": "fondos insuficientes",
@@ -95,8 +88,7 @@ fn campo(c, clave) {
     return str(c[clave]).trim()
 }
 
--- La clave se compara por su hash: igualar textos directamente tarda más
--- cuantos más caracteres acierta, y eso se puede medir desde fuera.
+-- Compara los hashes de la clave para que el tiempo de respuesta no revele cuántos caracteres coinciden.
 fn autorizado(req) {
     h = req["headers"]
     if not has_key(h, "authorization") {
@@ -133,8 +125,7 @@ fn cargo(id) {
 
 --   API de la tienda (con clave)
 
--- Idempotente por referencia: si la tienda reintenta (un timeout, un doble
--- clic), recibe el mismo cargo en vez de dos cobros para un pedido.
+-- Idempotente por referencia: si la tienda reintenta, recibe el mismo cargo y no se cobra dos veces.
 fn api_crear(req) {
     if not autorizado(req) {
         return resp(401, { "error": "clave de la tienda no válida" })
@@ -199,7 +190,7 @@ fn pagina(req) {
     return { "file": PAGINA, "content_type": "text/html; charset=utf-8" }
 }
 
--- Lo justo para pintar la página: sin la URL del aviso ni la referencia.
+-- Datos mínimos para la página de pago: sin la URL del aviso ni la referencia.
 fn api_publico(req) {
     c = cargo(req["params"]["id"])
     if c == null {
@@ -231,8 +222,7 @@ fn api_pagar(req) {
         motivo = FALLAN[numero]
     }
 
-    -- Solo un cargo sin pagar y sin caducar se puede pagar: el WHERE lo
-    -- decide, así dos pagos a la vez no cobran dos veces.
+    -- Solo se puede pagar un cargo pendiente y no caducado. El WHERE evita cobrar dos veces.
     hecho = db.first(BD, "
         UPDATE pasarela_cargos
         SET estado = ?, motivo = ?, tarjeta = ?,
@@ -256,8 +246,7 @@ fn api_pagar(req) {
 
 --   Avisos a la tienda
 
--- Se firma `t.cuerpo`: con la marca de tiempo dentro de la firma, un aviso
--- capturado no se puede reenviar más tarde.
+-- Se firma `t.cuerpo`: al incluir la marca de tiempo, un aviso capturado no se puede reenviar después.
 fn avisar(c, evento) {
     id = "ev_" + crypto.token(12)
     cuerpo_txt = json.forge({ "id": id, "evento": evento, "cargo_id": c["id"],

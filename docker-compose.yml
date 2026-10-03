@@ -1,13 +1,5 @@
-# Postgres para la demo.
-#
-#   docker compose up -d
-#
-# Escucha en el 5433, no en el 5432: así no choca con un PostgreSQL que ya
-# tengas instalado en la máquina.
-#
-# Estas credenciales son de juguete y están a la vista a propósito: la base
-# vive en un contenedor local y no guarda nada real. Para apuntar a otro
-# Postgres, cambia ORION_BD al arrancar la aplicación.
+# Sistema completo: `docker compose up -d --build` → http://localhost:8086
+# Postgres usa el puerto 5433 para no chocar con uno local. Credenciales solo para pruebas.
 
 services:
   postgres:
@@ -33,12 +25,12 @@ services:
       ORION_BD: postgres://comercio:comercio@postgres:5432/comercio
       ORION_JWT: secreto-compartido-entre-instancias
       ORION_INSTANCIA: app1
-      # La pasarela es otro servicio; su aviso llega por el balanceador.
+      # La pasarela es otro servicio; su aviso llega a la tienda por el balanceador.
       ORION_PASARELA_URL: http://pasarela:8090/pasarela
       ORION_URL_INTERNA: http://balanceador
       ORION_PASARELA_CLAVE: clave-de-juguete
       ORION_PASARELA_SECRETO: secreto-de-juguete
-      # Las facturas salen por correo al buzón falso (http://localhost:8025).
+      # Las facturas se envían al buzón de pruebas (http://localhost:8025).
       ORION_SMTP_HOST: correo
       ORION_SMTP_PUERTO: "1025"
       ORION_SMTP_SEGURIDAD: ninguna
@@ -64,9 +56,7 @@ services:
       postgres:
         condition: service_healthy
 
-  # Los workers no atienden peticiones: consumen la cola. Son procesos
-  # aparte a proposito, para que una punta de trabajo en segundo plano no
-  # robe hilos a quien esta comprando.
+  # Workers en procesos separados: el trabajo en segundo plano no ocupa hilos de la web.
   worker1:
     build: .
     command: ["orion", "--run", "backend/worker.orx"]
@@ -87,8 +77,7 @@ services:
       postgres:
         condition: service_healthy
 
-  # Buzón falso para probar el correo: recibe todo y lo enseña en
-  # http://localhost:8025, sin mandar nada a nadie de verdad.
+  # Buzón SMTP de pruebas: recibe los correos y los muestra en http://localhost:8025.
   correo:
     image: axllent/mailpit:latest
     container_name: comercio-correo
@@ -96,7 +85,7 @@ services:
       - "1025:1025"
       - "8025:8025"
 
-  # Pasarela de pago simulada: otro proceso de Orion, con sus propias tablas.
+  # Pasarela de pago simulada: otro proceso de Orion con sus propias tablas.
   pasarela:
     build: .
     command: ["orion", "--run", "pasarela/main.orx"]

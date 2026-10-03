@@ -1,4 +1,4 @@
--- Comercio: rutas y arranque. La lógica vive en los módulos de backend/.
+-- Comercio: rutas y arranque del servidor. La lógica está en los módulos de backend/.
 use "router" as router
 use "backend/config" as config
 use "backend/http" as http
@@ -37,7 +37,7 @@ fn api_registro(req) {
     if not r["ok"] {
         return http.json_resp(400, { "error": r["error"] })
     }
-    -- Tras registrarse ya queda dentro
+    -- Tras registrarse, el usuario queda autenticado sin pedir login otra vez.
     entrada = cuentas.login(http.campo(c, "email"), http.campo(c, "pass"))
     return http.json_resp(201, { "token": entrada["token"], "usuario": entrada["usuario"] })
 }
@@ -95,7 +95,7 @@ fn api_quitar(req) {
 fn api_checkout(req) {
     r = pedidos.comprar(cuentas.id_de(req))
     if not r["ok"] {
-        -- 409: la petición era válida, pero el estado de la tienda cambió.
+        -- 409: la petición es válida, pero el stock cambió mientras tanto.
         return http.json_resp(409, { "error": r["error"], "agotadas": r["agotadas"] })
     }
     return http.json_resp(201, r["pedido"])
@@ -105,8 +105,7 @@ fn api_pedidos(req) {
     return http.json_resp(200, pedidos.mios(cuentas.id_de(req)))
 }
 
--- Lleva a la pasarela: crea el cargo (o reutiliza el que había) y devuelve
--- la URL de pago. Se puede repetir desde "Mis pedidos" si el primer intento falló.
+-- Crea el cargo en la pasarela (o reutiliza el existente) y devuelve la URL de pago.
 fn api_pagar(req) {
     r = pagos.iniciar(cuentas.id_de(req), http.id_ruta(req), pagos.origen(req))
     if not r["ok"] {
@@ -115,7 +114,7 @@ fn api_pagar(req) {
     return http.json_resp(200, { "url_pago": r["url_pago"] })
 }
 
--- El PDF de la factura, solo para el dueño del pedido.
+-- PDF de la factura; solo para el dueño del pedido.
 fn api_factura(req) {
     d = facturas.descargar(cuentas.id_de(req), http.id_ruta(req))
     if d == null {
@@ -125,7 +124,7 @@ fn api_factura(req) {
              "headers": { "Content-Disposition": "attachment; filename=\"" + d["nombre"] + "\"" } }
 }
 
--- El webhook de la pasarela. Sin JWT: lo que lo autentica es la firma.
+-- Aviso (webhook) de la pasarela. No usa JWT: se autentica con la firma HMAC.
 fn api_aviso_pago(req) {
     r = pagos.recibir(req)
     if r["codigo"] != 200 {
@@ -139,12 +138,10 @@ fn api_salud(req) {
     return http.salud()
 }
 
---   Administración: router.guard exige un JWT válido (401) y `solo_admin`,
---   el rol admin (403), antes de llegar a los handlers.
+--   Administración: router.guard exige un JWT válido (401) y solo_admin el rol admin (403).
 
--- El rol se lee del token, sin consultar la base: el token está firmado y no
--- se puede editar. El precio es que si a alguien se le quita el rol, lo
--- conserva hasta que su token caduque (ORION_JWT_HORAS).
+-- El rol se lee del JWT firmado, sin consultar la base.
+-- Si se le quita el rol a alguien, lo conserva hasta que el token caduque.
 fn solo_admin(req) {
     if not req["path"].starts_with("/api/admin") {
         return null
@@ -204,8 +201,7 @@ fn api_admin_informes(req) {
     return http.json_resp(200, admin.informes())
 }
 
--- 202: aceptado, no hecho. El informe lo genera un worker; el panel consulta
--- la lista hasta verlo en 'listo'.
+-- 202: el informe se genera en segundo plano; el panel consulta su estado.
 fn api_admin_pedir_informe(req) {
     c = http.cuerpo(req)
     r = admin.pedir_informe(cuentas.id_de(req), http.campo(c, "formato"), http.campo(c, "desde"), http.campo(c, "hasta"))
@@ -238,8 +234,7 @@ fn api_admin_importar(req) {
     return http.json_resp(200, r["resultado"])
 }
 
---   Monitor: público a propósito. No enseña datos de nadie, solo procesos,
---   cola y tiempos.
+--   Monitor: público; solo muestra procesos, cola y tiempos, no datos de usuarios.
 
 fn api_monitor(req) {
     return http.json_resp(200, monitor.estado(config.INSTANCIA))
@@ -304,15 +299,14 @@ router.post(r, "/api/monitor/carrera",            "api_carrera")
 router.get(r,  "/api/monitor/carrera",            "api_carrera_resultado")
 router.get(r,  "/api/monitor/busqueda",           "api_medir_busqueda")
 
--- Todo lo que cuelgue de /api/yo exige un JWT válido: sin él, serve responde
--- 401 y el handler ni se ejecuta.
+-- Las rutas protegidas exigen un JWT válido; sin él, serve responde 401 sin llamar al handler.
 router.guard(r, "/api/yo",       config.JWT_SECRETO)
 router.guard(r, "/api/carrito",  config.JWT_SECRETO)
 router.guard(r, "/api/checkout", config.JWT_SECRETO)
 router.guard(r, "/api/pedidos",  config.JWT_SECRETO)
 router.guard(r, "/api/admin",    config.JWT_SECRETO)
 router.use_middleware(r, "solo_admin")
--- Sin una pasarela aparte, la simulada se monta aquí mismo bajo /pasarela.
+-- Sin una pasarela externa, la simulada se monta en este servidor bajo /pasarela.
 if config.PASARELA_INTEGRADA {
     pasarela.preparar()
     pasarela.montar(r)

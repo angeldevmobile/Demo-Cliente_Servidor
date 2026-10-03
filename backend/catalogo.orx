@@ -3,8 +3,8 @@ use "db" as db
 use "regex" as regex
 use "backend/config" as config
 
--- "tecla mecan" → "tecla:* & mecan:*": cada palabra como prefijo. Solo pasan
--- letras y cifras, así lo que se escriba nunca rompe la consulta.
+-- "tecla mecan" → "tecla:* & mecan:*": cada palabra se busca como prefijo.
+-- Solo se admiten letras y dígitos, así la entrada no puede romper la consulta.
 fn tsquery(busqueda) {
     partes = []
     for p in regex.find_all(busqueda.lower(), "[\\p{L}\\p{N}]+") {
@@ -13,8 +13,7 @@ fn tsquery(busqueda) {
     return partes.join(" & ")
 }
 
--- El WHERE de la búsqueda, para la tienda y el panel: tsvector con índice GIN,
--- y el SKU exacto aparte (el analizador parte "TEC-01" en trozos).
+-- Condición de búsqueda para la tienda y el panel: texto completo (GIN) o SKU exacto.
 fn filtro_busqueda(busqueda) {
     q = tsquery(busqueda)
     if q == "" {
@@ -23,9 +22,8 @@ fn filtro_busqueda(busqueda) {
     return ["(busqueda @@ to_tsquery('spanish', ?) OR sku = ?)", [q, busqueda.upper()]]
 }
 
--- La consulta del catálogo, como [sql, params]; la usa también medir-busqueda.
--- Con búsqueda, primero se buscan las coincidencias (índice GIN) y luego se
--- ordenan: si no, Postgres recorre el millón de filas en orden filtrando.
+-- Devuelve [sql, params]. Con búsqueda, filtra primero (CTE MATERIALIZED) y ordena después,
+-- para que Postgres use el índice GIN en lugar de recorrer la tabla en orden.
 fn consulta(busqueda, categoria, tope) {
     columnas = "id, sku, nombre, descripcion, categoria, precio, stock"
     donde = "activo = true"
@@ -56,8 +54,7 @@ fn listar(busqueda, categoria, limite) {
     return db.query(config.BD, c[0], c[1])
 }
 
--- La ficha: el producto con su detalle, las características como lista y
--- unos cuantos más de la misma categoría.
+-- Ficha del producto: detalle, características como lista y productos de la misma categoría.
 fn por_sku(sku) {
     p = db.first(config.BD, "SELECT id, sku, nombre, descripcion, categoria, precio, stock,
                                     detalle, caracteristicas
@@ -83,7 +80,7 @@ fn por_id(id) {
                                 FROM productos WHERE id = ? AND activo = true", [id])
 }
 
--- Las categorías salen de los datos: una nueva aparece sola en los filtros.
+-- Categorías calculadas desde los productos activos.
 fn categorias() {
     fuera = []
     filas = db.query(config.BD, "SELECT categoria, COUNT(*) AS n

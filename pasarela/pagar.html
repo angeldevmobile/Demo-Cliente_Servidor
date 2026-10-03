@@ -249,7 +249,7 @@
     </main>
 
     <script>
-      // La ruta es <prefijo>/pagar/<id>: la API cuelga del mismo prefijo.
+      // La URL es <prefijo>/pagar/<id>; la API está bajo el mismo prefijo.
       const partes = location.pathname.split("/");
       const id = decodeURIComponent(partes.pop());
       partes.pop();

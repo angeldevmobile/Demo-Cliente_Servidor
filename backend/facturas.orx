@@ -1,5 +1,5 @@
--- Facturas: el PDF, el correo con el PDF adjunto y la descarga. Las genera el
--- worker cuando llega el pago; la web solo las sirve.
+-- Facturas: genera el PDF, lo envía por correo y permite descargarlo.
+-- Las genera el worker cuando se confirma el pago.
 use "db" as db
 use "fs" as fs
 use "pdf" as pdf
@@ -44,8 +44,8 @@ fn pdf_de(ruta, p, lineas) {
          "subject": "Factura " + numero(p) })
 }
 
--- Genera el PDF y lo guarda. El correo se encola en la MISMA sentencia y solo
--- la primera vez (`nueva`): si el trabajo se reintenta, no se manda dos veces.
+-- Genera el PDF y lo guarda. El correo se encola en la misma sentencia y solo la primera vez
+-- (`nueva`), así un reintento no envía dos correos.
 fn generar(pedido_id) {
     p = pedido(pedido_id)
     if p == null {
@@ -84,8 +84,8 @@ fn generar(pedido_id) {
         RETURNING id", [pedido_id, numero(p), texto, b64, bytes, str(pedido_id)])
 }
 
--- El correo con el PDF adjunto. Sin servidor SMTP configurado no se manda
--- nada, y no es un error: la factura sigue en "Mis pedidos".
+-- Envía la factura con el PDF adjunto. Sin SMTP configurado no hace nada:
+-- la factura sigue disponible en "Mis pedidos".
 fn enviar(pedido_id) {
     if config.SMTP["servidor"] == "" {
         return "sin correo configurado"
@@ -98,7 +98,7 @@ fn enviar(pedido_id) {
         error("la factura del pedido " + str(pedido_id) + " no está generada")
     }
 
-    -- Un dict nuevo: asignar config.SMTP lo compartiría y se ensuciaría.
+    -- Copia del dict: asignar config.SMTP directamente lo modificaría para todos.
     opciones = {}
     for k in config.SMTP.keys() {
         opciones[k] = config.SMTP[k]
@@ -124,8 +124,7 @@ fn enviar(pedido_id) {
     return "enviada a " + f["email"]
 }
 
--- Como los informes: cada instancia baja el PDF de Postgres la primera vez y
--- lo reutiliza. Solo el dueño del pedido puede bajarlo.
+-- Escribe el PDF en un temporal la primera vez y lo reutiliza. Solo lo descarga el dueño del pedido.
 fn descargar(usuario_id, pedido_id) {
     f = db.first(config.BD, "
         SELECT f.numero FROM facturas f JOIN pedidos p ON p.id = f.pedido_id

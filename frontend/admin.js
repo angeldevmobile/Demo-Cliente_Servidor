@@ -1,5 +1,4 @@
-// Panel de administración: habla con /api/admin/*. La sesión es la misma de
-// la tienda (localStorage), así que un admin que ya entró no repite el login.
+// Panel de administración: consume /api/admin/*. Comparte la sesión de la tienda (localStorage).
 
 const $ = (id) => document.getElementById(id);
 const EUR = new Intl.NumberFormat("es-ES", { style: "currency", currency: "EUR" });
@@ -206,7 +205,7 @@ function editar(p) {
   $("p-categoria").value = nuevo ? "" : p.categoria;
   $("p-precio").value = nuevo ? "" : p.precio;
   $("p-descripcion").value = nuevo ? "" : p.descripcion;
-  // El stock solo se fija al dar de alta; después se ajusta con + y −.
+  // El stock solo se fija en el alta; después se ajusta con + y −.
   $("campo-stock").hidden = !nuevo;
   $("p-stock").value = 0;
   (nuevo ? $("p-sku") : $("p-nombre")).focus();
@@ -288,7 +287,7 @@ $("filas-pedidos").addEventListener("click", async (ev) => {
 //   Informes
 
 const hoy = new Date();
-// Fecha local, no UTC: por la tarde, toISOString() ya daría el día siguiente.
+// Fecha local, no UTC: toISOString() puede devolver ya el día siguiente.
 const iso = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
 $("i-desde").value = iso(new Date(hoy.getFullYear(), hoy.getMonth(), 1));
 $("i-hasta").value = iso(hoy);
@@ -310,7 +309,7 @@ async function cargarInformes() {
     </tr>`).join("")
     : `<tr><td colspan="7" class="vacio-tabla">Todavía no has pedido ningún informe.</td></tr>`;
 
-  // Mientras haya alguno en marcha, se vuelve a mirar cada 2 segundos.
+  // Mientras haya informes en proceso, consulta cada 2 segundos.
   clearTimeout(sondeo);
   if (lista.some((i) => i.estado === "pendiente") && !$("tab-informes").hidden) {
     sondeo = setTimeout(() => cargarInformes().catch(() => {}), 2000);
@@ -330,8 +329,7 @@ $("form-informe").addEventListener("submit", async (ev) => {
   }
 });
 
-// La descarga lleva el token en la cabecera, así que no vale un <a href>: se
-// pide con fetch y se guarda como archivo.
+// La descarga necesita el JWT en la cabecera: se pide con fetch y se guarda como archivo.
 $("filas-informes").addEventListener("click", async (ev) => {
   const b = ev.target.closest("button[data-informe]");
   if (!b) return;
