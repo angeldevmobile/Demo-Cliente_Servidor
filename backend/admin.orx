@@ -3,6 +3,7 @@
 use "db" as db
 use "backend/config" as config
 use "backend/catalogo" as catalogo
+use "backend/pedidos" as pedidos_mod
 
 CATEGORIA_MAX = 40
 
@@ -237,11 +238,11 @@ fn resumen() {
     return db.first(config.BD, "
         SELECT
           (SELECT COUNT(*) FROM pedidos
-             WHERE creado >= current_date AND estado <> 'cancelado') AS pedidos_hoy,
+             WHERE creado >= current_date AND " + pedidos_mod.VENDIDO + ") AS pedidos_hoy,
           (SELECT COALESCE(SUM(total), 0) FROM pedidos
-             WHERE creado >= current_date AND estado <> 'cancelado') AS ventas_hoy,
+             WHERE creado >= current_date AND " + pedidos_mod.VENDIDO + ") AS ventas_hoy,
           (SELECT COALESCE(SUM(total), 0) FROM pedidos
-             WHERE creado >= date_trunc('month', current_date) AND estado <> 'cancelado') AS ventas_mes,
+             WHERE creado >= date_trunc('month', current_date) AND " + pedidos_mod.VENDIDO + ") AS ventas_mes,
           (SELECT COUNT(*) FROM pedidos WHERE estado = 'pagado') AS por_enviar,
           (SELECT COUNT(*) FROM productos WHERE activo AND stock = 0) AS agotados,
           (SELECT COUNT(*) FROM productos WHERE activo AND stock BETWEEN 1 AND 5) AS pocas_unidades,

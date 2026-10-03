@@ -1,0 +1,27 @@
+-- La pasarela como servicio aparte: `orion run pasarela/main.orx`.
+use "router" as router
+use "json" as json
+use "env" as entorno
+use "pasarela/pasarela" as pasarela
+
+PUERTO = int(entorno.get("PORT", "8090"))
+
+fn salud(req) {
+    return { "status": 200, "body": json.forge({ "status": "ok", "servicio": "pasarela" }),
+             "content_type": "application/json" }
+}
+
+fn no_encontrado(req) {
+    return { "status": 404, "body": json.forge({ "error": "ruta no encontrada" }),
+             "content_type": "application/json" }
+}
+
+pasarela.preparar()
+
+r = router.new()
+pasarela.montar(r)
+router.get(r, "/health", salud)
+router.attach(r)
+
+show "Pasarela simulada  ·  http://localhost:" + str(PUERTO) + pasarela.PREFIJO
+serve PUERTO no_encontrado

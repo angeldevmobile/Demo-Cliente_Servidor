@@ -56,9 +56,26 @@ fn listar(busqueda, categoria, limite) {
     return db.query(config.BD, c[0], c[1])
 }
 
+-- La ficha: el producto con su detalle, las características como lista y
+-- unos cuantos más de la misma categoría.
 fn por_sku(sku) {
-    return db.first(config.BD, "SELECT id, sku, nombre, descripcion, categoria, precio, stock
-                                FROM productos WHERE sku = ? AND activo = true", [sku])
+    p = db.first(config.BD, "SELECT id, sku, nombre, descripcion, categoria, precio, stock,
+                                    detalle, caracteristicas
+                             FROM productos WHERE sku = ? AND activo = true", [sku])
+    if p == null {
+        return null
+    }
+    lista = []
+    if p["caracteristicas"] != "" {
+        lista = p["caracteristicas"].split("|")
+    }
+    p["caracteristicas"] = lista
+    p["relacionados"] = db.query(config.BD, "
+        SELECT id, sku, nombre, descripcion, categoria, precio, stock
+        FROM productos
+        WHERE categoria = ? AND sku <> ? AND activo = true
+        ORDER BY nombre LIMIT 4", [p["categoria"], sku])
+    return p
 }
 
 fn por_id(id) {

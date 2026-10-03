@@ -83,10 +83,12 @@
     <div class="barra">
       <select id="filtro-estado">
         <option value="">Todos los estados</option>
+        <option value="pendiente_pago">Pendientes de pago</option>
         <option value="pagado">Pagados (por enviar)</option>
         <option value="enviado">Enviados</option>
         <option value="entregado">Entregados</option>
         <option value="cancelado">Cancelados</option>
+        <option value="caducado">Caducados (sin pagar)</option>
       </select>
     </div>
     <div class="tabla-envoltorio">
@@ -117,7 +119,7 @@
 
   <section id="tab-importar" class="tab" hidden>
     <form id="form-importar" class="tarjeta">
-      <p>CSV con las columnas <code>sku,nombre,descripcion,categoria,precio,stock</code>. Lo nuevo se da de alta y lo que ya existe se actualiza; el stock de lo existente no se toca.</p>
+      <p>CSV con las columnas <code>sku,nombre,descripcion,categoria,precio,stock</code>, en cualquier orden. Opcionales, para la ficha: <code>detalle</code> y <code>caracteristicas</code> (separadas por <code>|</code>). Lo nuevo se da de alta y lo que ya existe se actualiza; el stock de lo existente no se toca, y la ficha solo si el archivo la trae.</p>
       <div class="barra">
         <input id="archivo" type="file" accept=".csv,text/csv" required>
         <button class="btn-principal" id="subir">Importar</button>

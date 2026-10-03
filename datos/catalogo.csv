@@ -1,17 +1,17 @@
-sku,nombre,descripcion,categoria,precio,stock
-TEC-01,Teclado mecánico 75%,Switches táctiles y cuerpo de aluminio,teclados,89.90,14
-TEC-02,Teclado inalámbrico bajo perfil,Tres dispositivos a la vez por Bluetooth,teclados,54.50,22
-TEC-03,Teclado ergonómico partido,Dos mitades separables con reposamuñecas,teclados,129.00,6
-TEC-04,Teclado 60% para viaje,Sin bloque numérico y con funda rígida,teclados,45.00,31
-MON-01,Monitor 27 pulgadas 144 Hz,Panel IPS con 1 ms de respuesta,monitores,249.00,9
-MON-02,Monitor 24 pulgadas IPS,Altura regulable y entrada USB-C,monitores,159.95,17
-MON-03,Monitor ultrapanorámico 34 pulgadas,Curvatura 1000R para dos ventanas a la vez,monitores,499.00,4
-MON-04,Monitor portátil 15 pulgadas,Se alimenta por el mismo cable que la señal,monitores,189.00,11
-AUD-01,Auriculares con cancelación,Treinta horas de batería y estuche,audio,199.00,12
-AUD-02,Micrófono USB cardioide,Con filtro antipop y brazo articulado,audio,89.00,19
-AUD-03,Altavoces de escritorio,Dos vías y salida para auriculares,audio,74.90,8
-AUD-04,Interfaz de audio 2 canales,Dos entradas XLR con alimentación fantasma,audio,139.00,5
-ACC-01,Alfombrilla extragrande,Base de goma y bordes cosidos,accesorios,19.90,40
-ACC-02,Soporte de monitor con pinza,Brazo articulado hasta 9 kg,accesorios,64.00,13
-ACC-03,Hub USB-C de 7 puertos,"Con HDMI, lector de tarjetas y carga",accesorios,49.90,25
-ACC-04,Lámpara de barra para monitor,Luz sin reflejos y temperatura regulable,accesorios,59.00,1
+sku,nombre,descripcion,categoria,precio,stock,detalle,caracteristicas
+TEC-01,Teclado mecánico 75%,Switches táctiles y cuerpo de aluminio,teclados,89.90,14,"Un 75% conserva las flechas y la fila de funciones en un tercio menos de espacio. Los switches táctiles marcan el punto de activación sin el clic ruidoso de los azules, y el cuerpo de aluminio no flexa al teclear fuerte.",Switches táctiles intercambiables|Cuerpo de aluminio anodizado|Teclas PBT de doble inyección|USB-C desmontable
+TEC-02,Teclado inalámbrico bajo perfil,Tres dispositivos a la vez por Bluetooth,teclados,54.50,22,"Pensado para quien salta entre portátil, tableta y móvil: tres perfiles Bluetooth y una tecla para cambiar entre ellos. Perfil bajo, recorrido corto y batería para meses.",Bluetooth 5.1 con 3 dispositivos|Hasta 6 meses de batería|Perfil de 18 mm|Distribución española
+TEC-03,Teclado ergonómico partido,Dos mitades separables con reposamuñecas,teclados,129.00,6,"Las dos mitades se separan hasta la anchura de los hombros, que es donde las muñecas dejan de doblarse hacia fuera. Incluye reposamuñecas acolchados y patas para inclinación negativa.",Dos mitades unidas por cable|Reposamuñecas de espuma|Inclinación negativa regulable|Teclas programables
+TEC-04,Teclado 60% para viaje,Sin bloque numérico y con funda rígida,teclados,45.00,31,"Un 60% cabe en cualquier mochila. Las funciones y el bloque numérico van en una segunda capa, y la funda rígida protege las teclas en el viaje.",Formato 60%|Funda rígida incluida|Capa de funciones programable|Peso de 520 g
+MON-01,Monitor 27 pulgadas 144 Hz,Panel IPS con 1 ms de respuesta,monitores,249.00,9,Para juego y trabajo con movimiento: 144 Hz se notan en cuanto mueves una ventana. El panel IPS mantiene el color al mirarlo de lado.,"27 pulgadas QHD (2560×1440)|144 Hz y 1 ms|Panel IPS, 99% sRGB|DisplayPort y 2 HDMI"
+MON-02,Monitor 24 pulgadas IPS,Altura regulable y entrada USB-C,monitores,159.95,17,"El monitor de oficina que no da guerra: altura y giro regulables, y un único USB-C que lleva imagen y carga el portátil a la vez.","24 pulgadas Full HD|USB-C con 65 W de carga|Altura, giro y pivote|Filtro de luz azul"
+MON-03,Monitor ultrapanorámico 34 pulgadas,Curvatura 1000R para dos ventanas a la vez,monitores,499.00,4,"Dos documentos lado a lado sin marco en medio, o una línea de tiempo de edición entera a la vista. La curvatura 1000R mantiene los bordes a la misma distancia del ojo.",34 pulgadas WQHD (3440×1440)|Curvatura 1000R|100 Hz|Picture-by-Picture
+MON-04,Monitor portátil 15 pulgadas,Se alimenta por el mismo cable que la señal,monitores,189.00,11,"Una segunda pantalla para el portátil que viaja contigo. Un solo cable USB-C lleva la imagen y la energía, y la funda hace de soporte.","15,6 pulgadas Full HD|Un cable USB-C para todo|Funda-soporte magnética|Peso de 700 g"
+AUD-01,Auriculares con cancelación,Treinta horas de batería y estuche,audio,199.00,12,"Cancelación activa para la oficina abierta o el avión, y modo ambiente para oír sin quitártelos. Treinta horas de batería y carga rápida.","Cancelación activa de ruido|30 horas de batería|Carga rápida: 10 min, 5 h|Plegables con estuche"
+AUD-02,Micrófono USB cardioide,Con filtro antipop y brazo articulado,audio,89.00,19,"Patrón cardioide: recoge tu voz y deja fuera el teclado. Se conecta por USB sin interfaz, y el brazo lo acerca a la boca sin ocupar la mesa.","Cápsula cardioide de 16 mm|USB-C, sin drivers|Filtro antipop y brazo|Monitorización sin latencia"
+AUD-03,Altavoces de escritorio,Dos vías y salida para auriculares,audio,74.90,8,Dos vías con tweeter de seda para que las voces se entiendan a bajo volumen. Salida frontal para auriculares y entrada auxiliar.,"Dos vías, 2×20 W|Tweeter de seda|Bluetooth y entrada óptica|Salida de auriculares frontal"
+AUD-04,Interfaz de audio 2 canales,Dos entradas XLR con alimentación fantasma,audio,139.00,5,Dos entradas combo XLR/jack con alimentación fantasma para micrófonos de condensador. Monitorización directa para grabar sin retardo.,2 entradas XLR/jack|Alimentación fantasma 48 V|24 bits / 192 kHz|USB-C
+ACC-01,Alfombrilla extragrande,Base de goma y bordes cosidos,accesorios,19.90,40,Cabe el teclado y el ratón con sitio de sobra. La base de goma no se desliza y los bordes cosidos no se deshilachan con el roce.,90 × 40 cm|Base de goma antideslizante|Bordes cosidos|Lavable a mano
+ACC-02,Soporte de monitor con pinza,Brazo articulado hasta 9 kg,accesorios,64.00,13,Libera la mesa y pon el monitor a la altura de los ojos. La pinza sujeta tableros de hasta 9 cm y el brazo de gas se mueve con un dedo.,Hasta 9 kg y 32 pulgadas|Brazo de muelle de gas|Pinza o pasacables|VESA 75 y 100
+ACC-03,Hub USB-C de 7 puertos,"Con HDMI, lector de tarjetas y carga",accesorios,49.90,25,"Todo lo que le falta al portátil en un solo cable: vídeo, tarjetas de cámara, USB y carga pasante.",HDMI 4K a 60 Hz|3 USB-A y 1 USB-C|Lector SD y microSD|Carga pasante de 100 W
+ACC-04,Lámpara de barra para monitor,Luz sin reflejos y temperatura regulable,accesorios,59.00,1,"Ilumina la mesa sin reflejar en la pantalla. Se apoya sobre el monitor, sin taladros, y regula brillo y temperatura de color.",Luz asimétrica sin reflejos|2700 K a 6500 K|Alimentación USB-C|Mando inalámbrico

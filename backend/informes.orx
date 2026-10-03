@@ -4,12 +4,13 @@ use "db" as db
 use "fs" as fs
 use "excel" as excel
 use "pdf" as pdf
-use "formato" as formato
+use "format" as formato
 use "crypto" as crypto
 use "backend/config" as config
+use "backend/pedidos" as pedidos
 
--- Lo que se considera una venta: todo pedido que no se haya cancelado.
-VENTA = "p.estado <> 'cancelado' AND p.creado >= (?::text)::date AND p.creado < (?::text)::date + 1"
+-- Lo que se considera una venta: un pedido pagado (o ya enviado o entregado).
+VENTA = "p.estado IN " + pedidos.ESTADOS_VENTA + " AND p.creado >= (?::text)::date AND p.creado < (?::text)::date + 1"
 
 -- Todas las cifras salen sumadas de Postgres, en NUMERIC. Orion solo las
 -- coloca: sumar dinero en coma flotante es la forma clásica de que un informe
@@ -30,7 +31,7 @@ fn datos(desde, hasta) {
                COALESCE(SUM(p.total), 0) AS \"Importe (EUR)\"
         FROM generate_series((?::text)::date, (?::text)::date, interval '1 day') AS d
         LEFT JOIN pedidos p ON p.creado >= d AND p.creado < d + interval '1 day'
-                           AND p.estado <> 'cancelado'
+                           AND p.estado IN " + pedidos.ESTADOS_VENTA + "
         GROUP BY d ORDER BY d", [desde, hasta])
 
     -- El importe sale del precio de la LÍNEA, no del de la ficha: si el
@@ -58,7 +59,7 @@ fn datos(desde, hasta) {
 }
 
 fn eur(n) {
-    return formato.numero(n, 2, ".", ",") + " €"
+    return formato.number(n, 2, ".", ",") + " €"
 }
 
 fn ticket_medio(total) {
@@ -90,8 +91,8 @@ fn excel_de(ruta, d) {
 }
 
 -- El PDF lleva el resumen y las ventas por producto y por día; la lista de
--- pedidos va solo en el Excel. Colores de la tienda (--acento de estilos.css).
-ACENTO = "#1f6f4a"
+-- pedidos va solo en el Excel. El color, el de la marca (ORION_COLOR_MARCA).
+ACENTO = config.COLOR_MARCA
 
 fn pdf_de(ruta, d) {
     t = d["total"]

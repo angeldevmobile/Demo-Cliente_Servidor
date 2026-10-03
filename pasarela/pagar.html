@@ -1,0 +1,325 @@
+<!doctype html>
+<html lang="es">
+
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width,initial-scale=1">
+    <title>Pasarela · pago</title>
+    <link rel="icon"
+      href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>💳</text></svg>">
+    <style>
+      :root {
+        --tinta: #16181d;
+        --papel: #eef0f5;
+        --carta: #ffffff;
+        --borde: #dde1ea;
+        --suave: #687082;
+        --marca: #4f46e5;
+        --marca2: #4338ca;
+        --sobre-marca: #ffffff;
+        --ok: #15803d;
+        --mal: #b91c1c;
+      }
+
+      @media (prefers-color-scheme: dark) {
+        :root {
+          --tinta: #e6e8ef;
+          --papel: #0d0f14;
+          --carta: #161922;
+          --borde: #262a36;
+          --suave: #9aa1b2;
+          --marca: #8b84ff;
+          --marca2: #a29dff;
+          --sobre-marca: #0d0f14;
+          --ok: #4ade80;
+          --mal: #f87171;
+        }
+      }
+
+      * {
+        box-sizing: border-box
+      }
+
+      body {
+        margin: 0;
+        min-height: 100vh;
+        display: grid;
+        place-items: center;
+        padding: 1.5rem 1rem;
+        background: var(--papel);
+        color: var(--tinta);
+        font: 15px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif
+      }
+
+      .caja {
+        width: min(26rem, 100%);
+        background: var(--carta);
+        border: 1px solid var(--borde);
+        border-radius: 1rem;
+        padding: 1.5rem;
+        box-shadow: 0 10px 30px rgba(0, 0, 0, .08)
+      }
+
+      .marca {
+        display: flex;
+        align-items: center;
+        gap: .5rem;
+        font-weight: 700;
+        color: var(--marca)
+      }
+
+      .marca small {
+        color: var(--suave);
+        font-weight: 500
+      }
+
+      .importe {
+        font-size: 2rem;
+        font-weight: 700;
+        letter-spacing: -.02em;
+        margin: 1rem 0 0;
+        font-variant-numeric: tabular-nums
+      }
+
+      .desc {
+        color: var(--suave);
+        margin: 0 0 1.25rem
+      }
+
+      label {
+        display: flex;
+        flex-direction: column;
+        gap: .3rem;
+        font-size: .8rem;
+        color: var(--suave)
+      }
+
+      input {
+        padding: .65rem .75rem;
+        border: 1px solid var(--borde);
+        border-radius: .55rem;
+        background: var(--papel);
+        color: inherit;
+        font: inherit;
+        font-size: 1rem;
+        font-variant-numeric: tabular-nums
+      }
+
+      input:focus {
+        outline: none;
+        border-color: var(--marca)
+      }
+
+      .fila {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: .75rem
+      }
+
+      .fila label {
+        min-width: 0
+      }
+
+      input {
+        width: 100%;
+        min-width: 0
+      }
+
+      form {
+        display: flex;
+        flex-direction: column;
+        gap: .8rem
+      }
+
+      button {
+        font: inherit;
+        cursor: pointer;
+        border: 0
+      }
+
+      .pagar {
+        padding: .8rem;
+        border-radius: .6rem;
+        background: var(--marca);
+        color: var(--sobre-marca);
+        font-weight: 700;
+        font-size: 1rem
+      }
+
+      .pagar:hover {
+        background: var(--marca2)
+      }
+
+      .pagar:disabled {
+        opacity: .6;
+        cursor: progress
+      }
+
+      .volver {
+        display: block;
+        text-align: center;
+        margin-top: .9rem;
+        color: var(--suave);
+        font-size: .85rem
+      }
+
+      .msg {
+        margin: 0;
+        padding: .7rem .8rem;
+        border-radius: .55rem;
+        font-size: .9rem
+      }
+
+      .msg.ok {
+        background: color-mix(in srgb, var(--ok) 14%, transparent);
+        color: var(--ok)
+      }
+
+      .msg.mal {
+        background: color-mix(in srgb, var(--mal) 14%, transparent);
+        color: var(--mal)
+      }
+
+      .pruebas {
+        margin-top: 1.25rem;
+        padding-top: 1rem;
+        border-top: 1px dashed var(--borde);
+        font-size: .8rem;
+        color: var(--suave)
+      }
+
+      .pruebas p {
+        margin: 0 0 .4rem
+      }
+
+      .pruebas button {
+        display: flex;
+        justify-content: space-between;
+        width: 100%;
+        padding: .35rem .5rem;
+        border-radius: .4rem;
+        background: none;
+        color: var(--tinta);
+        font-size: .8rem;
+        text-align: left
+      }
+
+      .pruebas button:hover {
+        background: var(--papel)
+      }
+
+      .pruebas code {
+        font-family: ui-monospace, Menlo, monospace
+      }
+
+      [hidden] {
+        display: none !important
+      }
+    </style>
+  </head>
+
+  <body>
+    <main class="caja">
+      <div class="marca">◈ Pasarela <small>simulada · nadie cobra nada</small></div>
+      <p class="importe" id="importe">…</p>
+      <p class="desc" id="desc"></p>
+
+      <p id="estado" class="msg" hidden></p>
+
+      <form id="form">
+        <label>Número de tarjeta<input id="tarjeta" inputmode="numeric" autocomplete="cc-number"
+            placeholder="4111 1111 1111 1111" required></label>
+        <div class="fila">
+          <label>Caducidad<input id="caduca" autocomplete="cc-exp" placeholder="MM/AA" required></label>
+          <label>CVC<input id="cvc" inputmode="numeric" autocomplete="cc-csc" placeholder="123" required></label>
+        </div>
+        <button class="pagar" id="pagar">Pagar</button>
+      </form>
+      <a class="volver" id="volver" href="/">Cancelar y volver a la tienda</a>
+
+      <div class="pruebas">
+        <p>Tarjetas de prueba (pulsa para rellenar):</p>
+        <button type="button"
+          data-t="4111 1111 1111 1111"><code>4111 1111 1111 1111</code><span>aprobada</span></button>
+        <button type="button"
+          data-t="4000 0000 0000 0002"><code>4000 0000 0000 0002</code><span>rechazada</span></button>
+        <button type="button" data-t="4000 0000 0000 9995"><code>4000 0000 0000 9995</code><span>sin
+            fondos</span></button>
+      </div>
+    </main>
+
+    <script>
+      // La ruta es <prefijo>/pagar/<id>: la API cuelga del mismo prefijo.
+      const partes = location.pathname.split("/");
+      const id = decodeURIComponent(partes.pop());
+      partes.pop();
+      const API = partes.join("/") + "/api/cargos/" + encodeURIComponent(id);
+      const $ = (x) => document.getElementById(x);
+      let retorno = "/";
+
+      function mensaje(texto, tono) {
+        $("estado").textContent = texto;
+        $("estado").className = "msg " + tono;
+        $("estado").hidden = !texto;
+      }
+
+      function cerrado(texto, tono) {
+        mensaje(texto, tono);
+        $("form").hidden = true;
+        document.querySelector(".pruebas").hidden = true;
+        $("volver").textContent = "Volver a la tienda";
+      }
+
+      async function cargar() {
+        const r = await fetch(API + "/publico");
+        const c = await r.json().catch(() => ({}));
+        if (!r.ok) { $("importe").hidden = true; cerrado(c.error || "Este pago no existe.", "mal"); return; }
+        const fmt = new Intl.NumberFormat("es-ES", { style: "currency", currency: c.moneda || "EUR" });
+        $("importe").textContent = fmt.format(c.importe);
+        $("desc").textContent = c.descripcion;
+        $("pagar").textContent = "Pagar " + fmt.format(c.importe);
+        retorno = c.url_retorno;
+        $("volver").href = retorno;
+        if (c.estado === "pagado") cerrado("Este pago ya está hecho.", "ok");
+        else if (c.caducado) cerrado("Este pago caducó. Vuelve a la tienda para intentarlo otra vez.", "mal");
+        else if (c.estado === "rechazado") mensaje(`El último intento falló: ${c.motivo}. Prueba con otra tarjeta.`, "mal");
+      }
+
+      $("form").addEventListener("submit", async (ev) => {
+        ev.preventDefault();
+        $("pagar").disabled = true;
+        mensaje("", "");
+        try {
+          const r = await fetch(API + "/pagar", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ tarjeta: $("tarjeta").value, caduca: $("caduca").value.trim(), cvc: $("cvc").value.trim() }),
+          });
+          const d = await r.json().catch(() => ({}));
+          if (!r.ok) { mensaje(d.error || `error ${r.status}`, "mal"); if (d.url_retorno) retorno = d.url_retorno; return; }
+          if (d.estado === "pagado") {
+            cerrado("Pago aprobado. Volviendo a la tienda…", "ok");
+            setTimeout(() => { location.href = d.url_retorno; }, 1200);
+          } else {
+            mensaje(`Pago rechazado: ${d.motivo}. Prueba con otra tarjeta.`, "mal");
+          }
+        } catch (e) {
+          mensaje("No se pudo contactar con la pasarela: " + e.message, "mal");
+        } finally {
+          $("pagar").disabled = false;
+        }
+      });
+
+      for (const b of document.querySelectorAll(".pruebas button")) {
+        b.addEventListener("click", () => {
+          $("tarjeta").value = b.dataset.t;
+          $("caduca").value = "12/" + String(new Date().getFullYear() + 2).slice(2);
+          $("cvc").value = "123";
+        });
+      }
+
+      cargar().catch((e) => cerrado("No se pudo cargar el pago: " + e.message, "mal"));
+    </script>
+  </body>
+
+</html>

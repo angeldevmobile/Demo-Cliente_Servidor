@@ -1,0 +1,284 @@
+-- Pasarela de pago simulada, al estilo de Culqi, Izipay o Mercado Pago: la
+-- tienda crea un cargo, el cliente paga en la página de la pasarela y la
+-- pasarela avisa a la tienda con un webhook firmado (HMAC-SHA256).
+--
+-- Es un servicio aparte: `orion run pasarela/main.orx`. También se puede
+-- montar dentro de otro servidor con `pasarela.montar(router)`.
+use "db" as db
+use "json" as json
+use "net" as net
+use "crypto" as crypto
+use "regex" as regex
+use "router" as router
+use "env" as entorno
+use "timewarp" as tw
+
+BD      = entorno.get("PASARELA_BD", entorno.get("ORION_BD", "postgres://comercio:comercio@127.0.0.1:5433/comercio"))
+PREFIJO = entorno.get("PASARELA_PREFIJO", "/pasarela")
+PAGINA  = entorno.get("PASARELA_PAGINA", "pasarela/pagar.html")
+
+-- La clave con la que se identifica la tienda y el secreto de los avisos.
+CLAVE   = entorno.get("ORION_PASARELA_CLAVE", "clave-de-desarrollo")
+SECRETO = entorno.get("ORION_PASARELA_SECRETO", "secreto-de-desarrollo")
+
+-- Cada aviso se manda esta cantidad de veces. Las pasarelas de verdad
+-- reenvían; mandarlo dos veces a propósito demuestra que la tienda no lo
+-- cuenta dos.
+ENVIOS = int(entorno.get("PASARELA_ENVIOS", "2"))
+TIMEOUT_AVISO = float(entorno.get("PASARELA_TIMEOUT", "5"))
+
+-- Tarjetas de prueba que fallan, como en los sandbox reales. Cualquier otro
+-- número válido (Luhn) se aprueba.
+FALLAN = {
+    "4000000000000002": "tarjeta rechazada por el banco",
+    "4000000000009995": "fondos insuficientes",
+    "4000000000000069": "tarjeta caducada"
+}
+
+fn preparar() {
+    db.transaction(BD, [
+        ["SELECT pg_advisory_xact_lock(7312)", []],
+        ["CREATE TABLE IF NOT EXISTS pasarela_cargos (
+            id          TEXT PRIMARY KEY,
+            referencia  TEXT NOT NULL,
+            importe     NUMERIC(10,2) NOT NULL CHECK (importe > 0),
+            moneda      TEXT NOT NULL,
+            descripcion TEXT NOT NULL,
+            url_retorno TEXT NOT NULL,
+            url_aviso   TEXT NOT NULL,
+            estado      TEXT NOT NULL DEFAULT 'pendiente',
+            motivo      TEXT,
+            tarjeta     TEXT,
+            expira      TIMESTAMPTZ NOT NULL,
+            creado      TIMESTAMPTZ NOT NULL DEFAULT now(),
+            pagado      TIMESTAMPTZ
+        )", []],
+        ["CREATE INDEX IF NOT EXISTS idx_pasarela_ref ON pasarela_cargos (referencia)", []],
+        ["CREATE TABLE IF NOT EXISTS pasarela_avisos (
+            id            TEXT PRIMARY KEY,
+            cargo_id      TEXT NOT NULL,
+            evento        TEXT NOT NULL,
+            envios        INTEGER NOT NULL DEFAULT 0,
+            ultimo_status INTEGER,
+            error         TEXT,
+            creado        TIMESTAMPTZ NOT NULL DEFAULT now()
+        )", []]
+    ])
+}
+
+fn montar(r) {
+    router.post(r, PREFIJO + "/api/cargos", api_crear)
+    router.get(r, PREFIJO + "/api/cargos/:id", api_ver)
+    router.get(r, PREFIJO + "/api/cargos/:id/publico", api_publico)
+    router.post(r, PREFIJO + "/api/cargos/:id/pagar", api_pagar)
+    router.get(r, PREFIJO + "/pagar/:id", pagina)
+}
+
+--   Utilidades
+
+fn resp(status, valor) {
+    return { "status": status, "body": json.forge(valor), "content_type": "application/json" }
+}
+
+fn cuerpo(req) {
+    attempt {
+        return json.parse(req["body"])
+    } handle err {
+        return {}
+    }
+}
+
+fn campo(c, clave) {
+    if type(c) != "dict" or not has_key(c, clave) or c[clave] == null {
+        return ""
+    }
+    return str(c[clave]).trim()
+}
+
+-- La clave se compara por su hash: igualar textos directamente tarda más
+-- cuantos más caracteres acierta, y eso se puede medir desde fuera.
+fn autorizado(req) {
+    h = req["headers"]
+    if not has_key(h, "authorization") {
+        return no
+    }
+    return crypto.sha256(h["authorization"]) == crypto.sha256("Bearer " + CLAVE)
+}
+
+fn luhn(numero) {
+    suma = 0
+    doble = no
+    i = len(numero) - 1
+    while i >= 0 {
+        d = int(numero[i])
+        if doble {
+            d = d * 2
+            if d > 9 {
+                d = d - 9
+            }
+        }
+        suma = suma + d
+        doble = not doble
+        i = i - 1
+    }
+    return suma % 10 == 0
+}
+
+fn cargo(id) {
+    return db.first(BD, "SELECT id, referencia, importe, moneda, descripcion, url_retorno, url_aviso,
+                                estado, motivo, tarjeta, expira < now() AS caducado,
+                                to_char(expira, 'YYYY-MM-DD\"T\"HH24:MI:SSOF') AS expira
+                         FROM pasarela_cargos WHERE id = ?", [id])
+}
+
+--   API de la tienda (con clave)
+
+-- Idempotente por referencia: si la tienda reintenta (un timeout, un doble
+-- clic), recibe el mismo cargo en vez de dos cobros para un pedido.
+fn api_crear(req) {
+    if not autorizado(req) {
+        return resp(401, { "error": "clave de la tienda no válida" })
+    }
+    c = cuerpo(req)
+    for k in ["referencia", "importe", "descripcion", "url_retorno", "url_aviso"] {
+        if campo(c, k) == "" {
+            return resp(400, { "error": "falta " + k })
+        }
+    }
+    importe = 0.0
+    attempt {
+        importe = float(campo(c, "importe"))
+    } handle err {
+        return resp(400, { "error": "importe no válido" })
+    }
+    if importe <= 0 {
+        return resp(400, { "error": "el importe tiene que ser mayor que 0" })
+    }
+    segundos = 900
+    if campo(c, "expira_en") != "" {
+        segundos = int(campo(c, "expira_en"))
+    }
+    moneda = campo(c, "moneda")
+    if moneda == "" {
+        moneda = "EUR"
+    }
+
+    ya = db.first(BD, "SELECT id FROM pasarela_cargos
+                       WHERE referencia = ? AND estado IN ('pendiente', 'rechazado')
+                         AND importe = ?::numeric AND expira > now()
+                       ORDER BY creado DESC LIMIT 1", [campo(c, "referencia"), str(importe)])
+    id = ""
+    if ya != null {
+        id = ya["id"]
+    } else {
+        id = "cg_" + crypto.token(12)
+        db.exec(BD, "INSERT INTO pasarela_cargos
+                         (id, referencia, importe, moneda, descripcion, url_retorno, url_aviso, expira)
+                     VALUES (?, ?, ?::numeric, ?, ?, ?, ?, now() + (? || ' seconds')::interval)",
+                [id, campo(c, "referencia"), str(importe), moneda, campo(c, "descripcion"),
+                 campo(c, "url_retorno"), campo(c, "url_aviso"), str(segundos)])
+    }
+    return resp(201, { "id": id, "url_pago": PREFIJO + "/pagar/" + id, "estado": "pendiente" })
+}
+
+fn api_ver(req) {
+    if not autorizado(req) {
+        return resp(401, { "error": "clave de la tienda no válida" })
+    }
+    c = cargo(req["params"]["id"])
+    if c == null {
+        return resp(404, { "error": "no existe ese cargo" })
+    }
+    c["url_aviso"] = null
+    return resp(200, c)
+}
+
+--   Página de pago (la ve el cliente, sin clave)
+
+fn pagina(req) {
+    return { "file": PAGINA, "content_type": "text/html; charset=utf-8" }
+}
+
+-- Lo justo para pintar la página: sin la URL del aviso ni la referencia.
+fn api_publico(req) {
+    c = cargo(req["params"]["id"])
+    if c == null {
+        return resp(404, { "error": "no existe ese cargo" })
+    }
+    return resp(200, { "importe": c["importe"], "moneda": c["moneda"], "descripcion": c["descripcion"],
+                       "estado": c["estado"], "motivo": c["motivo"], "caducado": c["caducado"],
+                       "expira": c["expira"], "url_retorno": c["url_retorno"] })
+}
+
+fn api_pagar(req) {
+    id = req["params"]["id"]
+    c = cuerpo(req)
+    numero = regex.replace(campo(c, "tarjeta"), "[ -]", "")
+    if not regex.is_match(numero, "^[0-9]{13,19}$") or not luhn(numero) {
+        return resp(400, { "error": "el número de tarjeta no es válido" })
+    }
+    if not regex.is_match(campo(c, "caduca"), "^(0[1-9]|1[0-2])/[0-9]{2}$") {
+        return resp(400, { "error": "la caducidad va como MM/AA" })
+    }
+    if not regex.is_match(campo(c, "cvc"), "^[0-9]{3,4}$") {
+        return resp(400, { "error": "el CVC son 3 o 4 cifras" })
+    }
+
+    estado = "pagado"
+    motivo = null
+    if has_key(FALLAN, numero) {
+        estado = "rechazado"
+        motivo = FALLAN[numero]
+    }
+
+    -- Solo un cargo sin pagar y sin caducar se puede pagar: el WHERE lo
+    -- decide, así dos pagos a la vez no cobran dos veces.
+    hecho = db.first(BD, "
+        UPDATE pasarela_cargos
+        SET estado = ?, motivo = ?, tarjeta = ?,
+            pagado = CASE WHEN ? = 'pagado' THEN now() END
+        WHERE id = ? AND estado IN ('pendiente', 'rechazado') AND expira > now()
+        RETURNING id", [estado, motivo, "•••• " + numero[len(numero) - 4:], estado, id])
+    actual = cargo(id)
+    if actual == null {
+        return resp(404, { "error": "no existe ese cargo" })
+    }
+    if hecho == null {
+        if actual["caducado"] and actual["estado"] != "pagado" {
+            return resp(409, { "error": "este pago caducó: vuelve a la tienda", "url_retorno": actual["url_retorno"] })
+        }
+        return resp(409, { "error": "este cargo ya está " + actual["estado"], "url_retorno": actual["url_retorno"] })
+    }
+
+    avisar(actual, "cargo." + estado)
+    return resp(200, { "estado": estado, "motivo": motivo, "url_retorno": actual["url_retorno"] })
+}
+
+--   Avisos a la tienda
+
+-- Se firma `t.cuerpo`: con la marca de tiempo dentro de la firma, un aviso
+-- capturado no se puede reenviar más tarde.
+fn avisar(c, evento) {
+    id = "ev_" + crypto.token(12)
+    cuerpo_txt = json.forge({ "id": id, "evento": evento, "cargo_id": c["id"],
+                              "referencia": c["referencia"], "importe": c["importe"],
+                              "moneda": c["moneda"], "motivo": c["motivo"] })
+    t = str(tw.timestamp())
+    firma = "t=" + t + ",v1=" + crypto.sign(t + "." + cuerpo_txt, SECRETO)
+    db.exec(BD, "INSERT INTO pasarela_avisos (id, cargo_id, evento) VALUES (?, ?, ?)", [id, c["id"], evento])
+
+    for n in range(ENVIOS) {
+        status = 0
+        fallo = null
+        attempt {
+            r = net.post(c["url_aviso"], cuerpo_txt,
+                         { "Content-Type": "application/json", "X-Pasarela-Firma": firma },
+                         { "timeout": TIMEOUT_AVISO })
+            status = r["status"]
+        } handle err {
+            fallo = str(err)
+        }
+        db.exec(BD, "UPDATE pasarela_avisos SET envios = envios + 1, ultimo_status = ?, error = ?
+                     WHERE id = ?", [status, fallo, id])
+    }
+}

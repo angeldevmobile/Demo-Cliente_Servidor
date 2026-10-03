@@ -109,6 +109,19 @@ function pintarCola(d) {
     : `<tr><td colspan="7" class="vacio-tabla">La cola está vacía. Lanza la carrera: la compra ganadora encola su factura.</td></tr>`;
 }
 
+function pintarAvisos(lista) {
+  $("avisos").innerHTML = lista.length ? lista.map((a) => `
+    <tr>
+      <td><code>${escapar(a.id)}</code></td>
+      <td>${escapar(a.evento)}</td>
+      <td>#${a.pedido_id ?? "—"}</td>
+      <td>${escapar(a.resultado)}</td>
+      <td class="num">${a.veces}</td>
+      <td class="num tenue">${duracion(a.hace_s)}</td>
+    </tr>`).join("")
+    : `<tr><td colspan="6" class="vacio-tabla">Aún no ha llegado ningún aviso. Compra algo en la tienda y págalo.</td></tr>`;
+}
+
 async function refrescar() {
   if (document.hidden) return;
   try {
@@ -119,6 +132,7 @@ async function refrescar() {
     pintarProcesos(datos.procesos, datos.atendido_por);
     pintarReparto();
     pintarCola(datos);
+    pintarAvisos(datos.avisos);
     aviso("");
   } catch (e) {
     aviso("No se pudo consultar el estado: " + e.message);

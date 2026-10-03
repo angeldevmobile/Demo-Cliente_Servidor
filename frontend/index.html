@@ -25,6 +25,7 @@
 
     <div class="sesion">
       <span id="quien" hidden></span>
+      <a id="ir-pedidos" class="enlace-cabecera" href="#/pedidos" hidden>Mis pedidos</a>
       <a class="enlace-cabecera" href="/monitor.html">Monitor</a>
       <button id="entrar" class="btn-plano" hidden>Entrar</button>
       <a id="ir-panel" class="btn-plano" href="/admin.html" hidden>Panel</a>
@@ -40,7 +41,7 @@
   </div>
 </header>
 
-<section class="portada">
+<section id="portada" class="portada">
   <div class="contenedor">
     <h1>Tu escritorio, mejor</h1>
     <p>Teclados, monitores y audio elegidos uno a uno. Envío en 24 horas.</p>
@@ -53,9 +54,12 @@
 </section>
 
 <main class="contenedor">
-  <div class="filtros">
-    <nav id="categorias" class="categorias"></nav>
-    <span id="contador" class="contador"></span>
+  <!-- Una sola página con cuatro vistas; la ruta va en el hash (#/p/TEC-01). -->
+  <div id="vista-catalogo">
+    <div class="filtros">
+      <nav id="categorias" class="categorias"></nav>
+      <span id="contador" class="contador"></span>
+    </div>
   </div>
 
   <p id="aviso" class="aviso" hidden></p>
@@ -64,6 +68,10 @@
     <div class="esqueleto"></div><div class="esqueleto"></div>
     <div class="esqueleto"></div><div class="esqueleto"></div>
   </section>
+
+  <section id="vista-ficha" class="vista" hidden></section>
+  <section id="vista-pedidos" class="vista" hidden></section>
+  <section id="vista-confirmacion" class="vista" hidden></section>
 </main>
 
 <footer class="pie">

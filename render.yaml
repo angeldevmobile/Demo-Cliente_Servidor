@@ -34,5 +34,10 @@ services:
         sync: false
       - key: ORION_INSTANCIA
         value: render-web
+      # La pasarela simulada va dentro del mismo proceso (sin ORION_PASARELA_URL).
+      - key: ORION_PASARELA_CLAVE
+        generateValue: true
+      - key: ORION_PASARELA_SECRETO
+        generateValue: true
       - key: ORION_WORKER
         value: render-worker

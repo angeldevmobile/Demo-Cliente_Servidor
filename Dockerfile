@@ -6,10 +6,11 @@
 # ubuntu-latest y exige GLIBC 2.39, que Debian bookworm (2.36) no tiene.
 FROM ubuntu:24.04
 
-# 0.1.7 como mínimo: el monitor usa process.version/memory/uptime, y antes
+# 0.1.8 como mínimo: la pasarela monta sus rutas pasando funciones de su
+# módulo, y usa los timeouts de net. 0.1.7 trajo process.version/memory, y
 # 0.1.6 trajo `and`/`or` con cortocircuito, `attempt` en
 # handlers de serve y los errores de Postgres con SQLSTATE.
-ARG ORION_VERSION=v0.1.7
+ARG ORION_VERSION=v0.1.8
 
 RUN apt-get update \
  && apt-get install -y --no-install-recommends ca-certificates curl \
@@ -24,6 +25,7 @@ COPY backend/  backend/
 COPY frontend/ frontend/
 COPY datos/    datos/
 COPY herramientas/ herramientas/
+COPY pasarela/ pasarela/
 COPY despliegue/arranque.sh despliegue/arranque.sh
 
 ENV PORT=8083

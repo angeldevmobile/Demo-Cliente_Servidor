@@ -1,0 +1,221 @@
+-- Pagos: la tienda crea el cargo en la pasarela, el cliente paga allí y la
+-- pasarela avisa con un webhook firmado. Lo que confirma un pago es ese
+-- aviso (o la conciliación), nunca que el navegador vuelva a la tienda.
+use "db" as db
+use "json" as json
+use "net" as net
+use "crypto" as crypto
+use "regex" as regex
+use "timewarp" as tw
+use "backend/config" as config
+
+-- Un aviso con una marca de tiempo más vieja que esto se rechaza: así no
+-- sirve de nada capturar uno y reenviarlo más tarde.
+TOLERANCIA_S = 300
+
+fn cabecera_clave() {
+    return { "Authorization": "Bearer " + config.PASARELA_CLAVE }
+}
+
+-- El origen público tal como lo ve el navegador (detrás de nginx o de
+-- Render), para la URL a la que vuelve el cliente tras pagar.
+fn origen(req) {
+    h = req["headers"]
+    proto = "http"
+    if has_key(h, "x-forwarded-proto") {
+        proto = h["x-forwarded-proto"].split(",")[0].trim()
+    }
+    host = "localhost:" + str(config.PORT)
+    if has_key(h, "host") {
+        host = h["host"]
+    }
+    return proto + "://" + host
+}
+
+--   Iniciar el pago
+
+fn iniciar(usuario_id, pedido_id, origen_url) {
+    p = db.first(config.BD, "SELECT id, total, estado, expira > now() AS vigente,
+                                    GREATEST(EXTRACT(EPOCH FROM expira - now()), 0)::int AS quedan
+                             FROM pedidos WHERE id = ? AND usuario_id = ?", [pedido_id, usuario_id])
+    if p == null {
+        return { "ok": no, "codigo": 404, "error": "ese pedido no existe" }
+    }
+    if p["estado"] != "pendiente_pago" {
+        return { "ok": no, "codigo": 409, "error": "el pedido ya está " + p["estado"] }
+    }
+    if not p["vigente"] {
+        return { "ok": no, "codigo": 409, "error": "el plazo para pagar este pedido terminó" }
+    }
+
+    datos = {
+        "referencia": str(p["id"]),
+        "importe": p["total"],
+        "moneda": "EUR",
+        "descripcion": "Comercio · pedido #" + str(p["id"]),
+        "url_retorno": origen_url + "/#/pedido/" + str(p["id"]),
+        "url_aviso": config.URL_INTERNA + "/api/pagos/aviso",
+        "expira_en": p["quedan"]
+    }
+    r = null
+    attempt {
+        r = net.post(config.PASARELA_URL + "/api/cargos", datos, cabecera_clave(), { "timeout": 10 })
+    } handle err {
+        return { "ok": no, "codigo": 502, "error": "la pasarela no responde, inténtalo en un momento" }
+    }
+    if not r["ok"] {
+        return { "ok": no, "codigo": 502, "error": "la pasarela rechazó el cargo (" + str(r["status"]) + ")" }
+    }
+    cargo = r["body"]
+    db.exec(config.BD, "UPDATE pedidos SET cargo_id = ?, url_pago = ? WHERE id = ?",
+            [cargo["id"], cargo["url_pago"], p["id"]])
+    return { "ok": yes, "url_pago": cargo["url_pago"] }
+}
+
+--   El aviso de la pasarela
+
+-- "t=1696...,v1=abc..." → { t, v1 }
+fn leer_firma(cabecera) {
+    partes = {}
+    for trozo in cabecera.split(",") {
+        kv = trozo.trim().split("=")
+        if len(kv) == 2 {
+            partes[kv[0]] = kv[1]
+        }
+    }
+    return partes
+}
+
+fn recibir(req) {
+    h = req["headers"]
+    if not has_key(h, "x-pasarela-firma") {
+        return { "codigo": 400, "error": "falta la firma" }
+    }
+    f = leer_firma(h["x-pasarela-firma"])
+    if not has_key(f, "t") or not has_key(f, "v1") or not regex.is_match(f["t"], "^[0-9]{1,12}$") {
+        return { "codigo": 400, "error": "firma mal formada" }
+    }
+    if abs(tw.timestamp() - int(f["t"])) > TOLERANCIA_S {
+        return { "codigo": 401, "error": "aviso caducado" }
+    }
+    -- Se verifica el cuerpo tal cual llegó, antes de parsearlo.
+    if not crypto.verify(f["t"] + "." + req["body"], f["v1"], config.PASARELA_SECRETO) {
+        return { "codigo": 401, "error": "firma no válida" }
+    }
+    a = json.parse(req["body"])
+    r = aplicar(a["id"], a["evento"], a["cargo_id"], int(a["referencia"]), a["importe"], a["motivo"])
+    return { "codigo": 200, "resultado": r }
+}
+
+-- Idempotente: el aviso, el cambio de estado y la factura van en UNA
+-- sentencia. Un aviso repetido solo suma a `veces`; el pedido solo pasa a
+-- 'pagado' desde 'pendiente_pago', con su cargo y su importe exactos.
+fn aplicar(aviso_id, evento, cargo_id, pedido_id, importe, motivo) {
+    if evento == "cargo.pagado" {
+        r = db.first(config.BD, "
+            WITH a AS (
+                INSERT INTO pagos_avisos (id, evento, cargo_id, pedido_id, resultado)
+                VALUES (?, ?, ?, ?, 'recibido')
+                ON CONFLICT (id) DO UPDATE SET veces = pagos_avisos.veces + 1, ultimo = now()
+                RETURNING (xmax = 0) AS nuevo
+            ), p AS (
+                UPDATE pedidos SET estado = 'pagado', pagado_en = now(), pago_motivo = NULL
+                WHERE id = ? AND estado = 'pendiente_pago' AND cargo_id = ? AND total = ?::numeric
+                  AND (SELECT nuevo FROM a)
+                RETURNING id
+            ), f AS (
+                INSERT INTO trabajos (tipo, datos)
+                SELECT 'factura', '{\"pedido_id\": ' || id || '}' FROM p
+                RETURNING id
+            )
+            SELECT (SELECT nuevo FROM a) AS nuevo, (SELECT COUNT(*) FROM p)::int AS pagado,
+                   (SELECT estado FROM pedidos WHERE id = ?) AS estado,
+                   (SELECT cargo_id FROM pedidos WHERE id = ?) AS cargo",
+            [aviso_id, evento, cargo_id, pedido_id, pedido_id, cargo_id, str(importe), pedido_id, pedido_id])
+        if not r["nuevo"] {
+            return "repetido: ignorado"
+        }
+        resultado = "pagado"
+        if r["pagado"] == 0 and r["estado"] == "pagado" and r["cargo"] == cargo_id {
+            -- El aviso y la conciliación confirmaron el mismo cobro.
+            resultado = "ya estaba pagado: ignorado"
+        } else if r["pagado"] == 0 {
+            -- Llegó el dinero de un pedido que ya no lo esperaba (caducado,
+            -- cancelado, otro cargo): hay que devolverlo, no perderlo.
+            resultado = "pago sin pedido que lo espere (estaba " + str(r["estado"]) + "): devolver"
+            db.exec(config.BD, "UPDATE pedidos SET pago_motivo = ? WHERE id = ?", [resultado, pedido_id])
+        }
+        db.exec(config.BD, "UPDATE pagos_avisos SET resultado = ? WHERE id = ?", [resultado, aviso_id])
+        return resultado
+    }
+
+    r = db.first(config.BD, "
+        WITH a AS (
+            INSERT INTO pagos_avisos (id, evento, cargo_id, pedido_id, resultado)
+            VALUES (?, ?, ?, ?, ?)
+            ON CONFLICT (id) DO UPDATE SET veces = pagos_avisos.veces + 1, ultimo = now()
+            RETURNING (xmax = 0) AS nuevo
+        ), p AS (
+            UPDATE pedidos SET pago_motivo = ?
+            WHERE id = ? AND estado = 'pendiente_pago' AND cargo_id = ? AND (SELECT nuevo FROM a)
+            RETURNING id
+        )
+        SELECT (SELECT nuevo FROM a) AS nuevo",
+        [aviso_id, evento, cargo_id, pedido_id, "rechazado: " + str(motivo), str(motivo), pedido_id, cargo_id])
+    if not r["nuevo"] {
+        return "repetido: ignorado"
+    }
+    return "rechazado"
+}
+
+--   Lo que hace el worker
+
+-- Un pedido sin pagar a tiempo caduca y devuelve su stock, en una sola
+-- sentencia: o las dos cosas o ninguna.
+fn caducar() {
+    r = db.first(config.BD, "
+        WITH c AS (
+            UPDATE pedidos SET estado = 'caducado', pago_motivo = 'sin pagar a tiempo'
+            WHERE estado = 'pendiente_pago' AND expira < now()
+            RETURNING id
+        ), s AS (
+            UPDATE productos pr SET stock = pr.stock + i.cantidad
+            FROM pedido_items i JOIN c ON c.id = i.pedido_id
+            WHERE pr.id = i.producto_id
+            RETURNING pr.id
+        )
+        SELECT (SELECT COUNT(*) FROM c)::int AS caducados")
+    return r["caducados"]
+}
+
+-- Si un aviso se perdió (la tienda caída justo entonces), se pregunta a la
+-- pasarela por los cargos que llevan un rato sin respuesta.
+fn conciliar() {
+    hechos = 0
+    sin_respuesta = db.query(config.BD, "
+        SELECT id, cargo_id FROM pedidos
+        WHERE estado = 'pendiente_pago' AND cargo_id IS NOT NULL
+          AND creado < now() - interval '1 minute'
+        ORDER BY id LIMIT 20")
+    for p in sin_respuesta {
+        attempt {
+            r = net.get(config.PASARELA_URL + "/api/cargos/" + p["cargo_id"], cabecera_clave(), { "timeout": 5 })
+            if r["ok"] and r["body"]["estado"] == "pagado" {
+                aplicar("conciliacion-" + p["cargo_id"], "cargo.pagado", p["cargo_id"], p["id"],
+                        r["body"]["importe"], null)
+                hechos = hechos + 1
+            }
+        } handle err {
+            show "  conciliación: la pasarela no responde (" + str(err) + ")"
+            return hechos
+        }
+    }
+    return hechos
+}
+
+fn avisos() {
+    return db.query(config.BD, "
+        SELECT id, evento, pedido_id, resultado, veces,
+               EXTRACT(EPOCH FROM now() - ultimo)::float8 AS hace_s
+        FROM pagos_avisos ORDER BY ultimo DESC LIMIT 10")
+}

@@ -10,6 +10,7 @@ use "backend/cola" as cola
 use "backend/cuentas" as cuentas
 use "backend/carrito" as carrito
 use "backend/catalogo" as catalogo
+use "backend/pagos" as pagos
 
 SKU_CARRERA = "CARRERA-1"
 MAX_COMPRADORES = 6
@@ -77,7 +78,8 @@ fn estado(instancia) {
         "procesos": procesos(),
         "cola": cola.estadisticas(),
         "trabajos": trabajos(),
-        "por_worker": por_worker()
+        "por_worker": por_worker(),
+        "avisos": pagos.avisos()
     }
 }
 

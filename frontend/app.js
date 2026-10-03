@@ -104,6 +104,7 @@ function pintarSesion() {
   $("salir").hidden = !dentro;
   if (FASES.panel) $("ir-panel").hidden = !(dentro && u.rol === "admin");
   if (FASES.carrito) $("ver-carrito").hidden = !dentro;
+  $("ir-pedidos").hidden = !dentro;
 }
 
 let modoRegistro = false;
@@ -132,6 +133,7 @@ $("entrar").addEventListener("click", abrirAcceso);
 $("salir").addEventListener("click", () => {
   sesion.salir();
   cargarCarrito();
+  if (location.hash.startsWith("#/pedido")) location.hash = "#/";
   aviso("Has salido de tu cuenta.", "ok");
 });
 
@@ -157,6 +159,7 @@ $("form-acceso").addEventListener("submit", async (ev) => {
     sesion.entrar(datos.token, datos.usuario);
     cerrar();
     await Promise.all([cargarCarrito(), cargarCatalogo()]);
+    mostrarRuta();
     $("pass").value = "";
     aviso(`Hola, ${datos.usuario.nombre}.`, "ok");
   } catch (e) {
@@ -168,7 +171,7 @@ $("form-acceso").addEventListener("submit", async (ev) => {
 });
 
 function escapar(t) {
-  return String(t).replace(/[&<>"]/g, (c) =>
+  return String(t ?? "").replace(/[&<>"]/g, (c) =>
     ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]);
 }
 
@@ -187,7 +190,7 @@ function tarjeta(p) {
     <div class="lienzo">${lienzo(p.categoria)}${etiqueta}</div>
     <div class="cuerpo">
       <span class="sku">${escapar(p.sku)}</span>
-      <h3>${escapar(p.nombre)}</h3>
+      <h3><a href="${rutaFicha(p.sku)}">${escapar(p.nombre)}</a></h3>
       <p class="desc">${escapar(p.descripcion)}</p>
       <div class="pie-producto">
         <b class="precio">${EUR.format(p.precio)}</b>
@@ -196,7 +199,10 @@ function tarjeta(p) {
     </div>`;
 
   const b = art.querySelector("button");
-  if (b) b.addEventListener("click", () => anadirAlCarrito(p.id));
+  if (b) b.addEventListener("click", (ev) => { ev.stopPropagation(); anadirAlCarrito(p.id, 1); });
+  art.addEventListener("click", (ev) => {
+    if (!ev.target.closest("a")) location.hash = rutaFicha(p.sku);
+  });
   return art;
 }
 
@@ -248,6 +254,7 @@ $("q").addEventListener("input", (ev) => {
   clearTimeout(temporizador);
   temporizador = setTimeout(() => {
     busquedaActual = ev.target.value.trim();
+    if (rutaActual().vista !== "catalogo") location.hash = "#/";
     cargarCatalogo().catch((e) => aviso(e.message, "error"));
   }, 250);
 });
@@ -292,23 +299,31 @@ function pintarCarrito(c) {
         <span class="detalle">${sinStock
           ? `quedan ${l.stock}: quítalo o compra menos`
           : `${l.cantidad} × ${EUR.format(l.precio)}`}</span>
+        <div class="cantidad mini">
+          <button data-d="-1" aria-label="Uno menos" ${l.cantidad <= 1 ? "disabled" : ""}>−</button>
+          <span>${l.cantidad}</span>
+          <button data-d="1" aria-label="Uno más" ${l.cantidad >= l.stock ? "disabled" : ""}>+</button>
+        </div>
       </div>
       <b>${EUR.format(l.subtotal)}</b>
       <button class="quitar" title="Quitar">×</button>`;
     fila.querySelector(".quitar").addEventListener("click", () => quitarLinea(l.id));
+    for (const b of fila.querySelectorAll(".cantidad button")) {
+      b.addEventListener("click", () => cambiarCantidad(l.id, l.cantidad + Number(b.dataset.d)));
+    }
     cont.appendChild(fila);
   }
 }
 
-async function anadirAlCarrito(productoId) {
+async function anadirAlCarrito(productoId, cantidad) {
   if (!sesion.token) { abrirAcceso(); return; }
   try {
     pintarCarrito(await api("/api/carrito", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ producto_id: productoId, cantidad: 1 }),
+      body: JSON.stringify({ producto_id: productoId, cantidad }),
     }));
-    aviso("Añadido al carrito.", "ok");
+    aviso(cantidad > 1 ? `${cantidad} unidades añadidas al carrito.` : "Añadido al carrito.", "ok");
   } catch (e) {
     aviso(e.message, "error");
   }
@@ -316,6 +331,19 @@ async function anadirAlCarrito(productoId) {
 
 // Líneas que la última compra rechazó por falta de stock, para marcarlas.
 let agotadas = new Set();
+
+async function cambiarCantidad(id, cantidad) {
+  agotadas.delete(id);
+  try {
+    pintarCarrito(await api(`/api/carrito/${id}`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ cantidad }),
+    }));
+  } catch (e) {
+    aviso(e.message, "error");
+  }
+}
 
 async function quitarLinea(id) {
   agotadas.delete(id);
@@ -340,8 +368,10 @@ $("pagar").addEventListener("click", async () => {
     const pedido = await api("/api/checkout", { method: "POST" });
     agotadas = new Set();
     cerrar();
-    aviso(`Pedido #${pedido.id} confirmado: ${EUR.format(pedido.total)}.`, "ok");
+    aviso("");
+    boton.textContent = "Yendo a pagar…";
     await Promise.all([cargarCarrito(), cargarCatalogo()]);
+    await irAPagar(pedido.id);
   } catch (e) {
     // 409: el carrito era válido, pero alguien se adelantó con el stock.
     agotadas = new Set(e.datos?.agotadas || []);
@@ -366,3 +396,275 @@ if (FASES.carrito && sesion.token) cargarCarrito();
 Promise.all([cargarCategorias(), cargarCatalogo()]).catch((e) =>
   aviso("No se pudo cargar el catálogo: " + e.message, "error")
 );
+
+//   Vistas: catálogo, ficha, mis pedidos y confirmación. La ruta va en el
+//   hash para que el botón atrás y los enlaces funcionen sin servidor.
+
+function rutaFicha(sku) { return "#/p/" + encodeURIComponent(sku); }
+
+function rutaActual() {
+  const [, tipo, id] = location.hash.replace(/^#/, "").split("/");
+  if (tipo === "p" && id) return { vista: "ficha", id: decodeURIComponent(id) };
+  if (tipo === "pedidos") return { vista: "pedidos" };
+  if (tipo === "pedido" && id) return { vista: "confirmacion", id: Number(id) };
+  return { vista: "catalogo" };
+}
+
+function mostrarVista(vista) {
+  const catalogo = vista === "catalogo";
+  $("portada").hidden = !catalogo;
+  $("vista-catalogo").hidden = !catalogo;
+  $("rejilla").hidden = !catalogo;
+  $("vista-ficha").hidden = vista !== "ficha";
+  $("vista-pedidos").hidden = vista !== "pedidos";
+  $("vista-confirmacion").hidden = vista !== "confirmacion";
+}
+
+async function mostrarRuta() {
+  const r = rutaActual();
+  mostrarVista(r.vista);
+  if (r.vista !== "catalogo") window.scrollTo(0, 0);
+  try {
+    if (r.vista === "ficha") await pintarFicha(r.id);
+    if (r.vista === "pedidos") await pintarPedidos();
+    if (r.vista === "confirmacion") await pintarConfirmacion(r.id);
+  } catch (e) {
+    aviso(e.message, "error");
+  }
+}
+
+const FECHA = new Intl.DateTimeFormat("es-ES", { dateStyle: "medium", timeStyle: "short" });
+
+function textoStock(stock) {
+  if (stock === 0) return `<p class="ficha-stock agotado">Agotado</p>`;
+  if (stock <= 5) return `<p class="ficha-stock pocas">Últimas ${stock} unidades</p>`;
+  return `<p class="ficha-stock">En stock · ${stock} unidades</p>`;
+}
+
+async function pintarFicha(sku) {
+  const v = $("vista-ficha");
+  v.innerHTML = `<div class="esqueleto ficha-esqueleto"></div>`;
+  let p;
+  try {
+    p = await api("/api/productos/" + encodeURIComponent(sku));
+  } catch {
+    v.innerHTML = `<p class="vacio">Ese producto no existe o ya no está a la venta.
+      <a class="enlace" href="#/">Volver a la tienda</a></p>`;
+    return;
+  }
+  const compra = FASES.carrito && p.stock > 0 ? `
+    <div class="ficha-compra">
+      <div class="cantidad">
+        <button data-d="-1" aria-label="Uno menos">−</button>
+        <input id="ficha-cantidad" type="number" min="1" max="${p.stock}" value="1" aria-label="Cantidad">
+        <button data-d="1" aria-label="Uno más">+</button>
+      </div>
+      <button id="ficha-anadir" class="btn-principal">Añadir al carrito</button>
+    </div>` : "";
+
+  v.innerHTML = `
+    <nav class="migas">
+      <a href="#/">Tienda</a><span>/</span>
+      <a href="#/" data-cat="${escapar(p.categoria)}">${escapar(p.categoria)}</a><span>/</span>
+      <span>${escapar(p.nombre)}</span>
+    </nav>
+    <div class="ficha">
+      <div class="lienzo ficha-lienzo">${lienzo(p.categoria)}</div>
+      <div class="ficha-info">
+        <span class="sku">${escapar(p.sku)}</span>
+        <h1>${escapar(p.nombre)}</h1>
+        <p class="ficha-desc">${escapar(p.descripcion)}</p>
+        <b class="ficha-precio">${EUR.format(p.precio)}</b>
+        ${textoStock(p.stock)}
+        ${compra}
+        ${p.detalle ? `<p class="ficha-detalle">${escapar(p.detalle)}</p>` : ""}
+        ${p.caracteristicas.length ? `
+          <h2>Características</h2>
+          <ul class="caracteristicas">${p.caracteristicas.map((c) => `<li>${escapar(c)}</li>`).join("")}</ul>` : ""}
+      </div>
+    </div>
+    ${p.relacionados.length ? `
+      <section class="relacionados">
+        <h2>Más en ${escapar(p.categoria)}</h2>
+        <div class="rejilla"></div>
+      </section>` : ""}`;
+
+  v.querySelector("[data-cat]").addEventListener("click", () => {
+    categoriaActual = p.categoria;
+    cargarCategorias();
+    cargarCatalogo().catch((e) => aviso(e.message, "error"));
+  });
+  const rel = v.querySelector(".relacionados .rejilla");
+  if (rel) for (const r of p.relacionados) rel.appendChild(tarjeta(r));
+
+  const campo = $("ficha-cantidad");
+  if (!campo) return;
+  const fijar = (n) => { campo.value = Math.min(p.stock, Math.max(1, n || 1)); };
+  for (const b of v.querySelectorAll(".ficha-compra .cantidad button")) {
+    b.addEventListener("click", () => fijar(Number(campo.value) + Number(b.dataset.d)));
+  }
+  campo.addEventListener("change", () => fijar(Number(campo.value)));
+  $("ficha-anadir").addEventListener("click", () => anadirAlCarrito(p.id, Number(campo.value)));
+}
+
+function tablaLineas(items) {
+  return `
+    <div class="tabla-envoltorio">
+      <table class="tabla">
+        <thead><tr><th>Producto</th><th class="num">Cantidad</th><th class="num">Precio</th><th class="num">Subtotal</th></tr></thead>
+        <tbody>${items.map((i) => `
+          <tr>
+            <td><a class="enlace-tabla" href="${rutaFicha(i.sku)}">${escapar(i.nombre)}</a>
+                <span class="sku">${escapar(i.sku)}</span></td>
+            <td class="num">${i.cantidad}</td>
+            <td class="num">${EUR.format(i.precio_unitario)}</td>
+            <td class="num">${EUR.format(i.subtotal)}</td>
+          </tr>`).join("")}
+        </tbody>
+      </table>
+    </div>`;
+}
+
+const NOMBRE_ESTADO = {
+  pendiente_pago: "pendiente de pago", pagado: "pagado", enviado: "enviado",
+  entregado: "entregado", cancelado: "cancelado", caducado: "caducado",
+};
+const PAGADO = new Set(["pagado", "enviado", "entregado"]);
+const HORA = new Intl.DateTimeFormat("es-ES", { hour: "2-digit", minute: "2-digit" });
+
+const etiquetaEstado = (e) =>
+  `<span class="estado estado-${escapar(e)}">${escapar(NOMBRE_ESTADO[e] || e)}</span>`;
+
+// Crea (o reutiliza) el cargo y manda al cliente a la página de la pasarela.
+// Si falla, se queda en la confirmación con el botón para reintentar.
+async function irAPagar(id) {
+  try {
+    const r = await api(`/api/pedidos/${id}/pagar`, { method: "POST" });
+    location.href = r.url_pago;
+  } catch (e) {
+    location.hash = `#/pedido/${id}`;
+    aviso(e.message, "error");
+  }
+}
+
+// Una línea con lo que falta: pagar, la factura, o por qué no se completó.
+function notaPedido(p) {
+  if (p.estado === "pendiente_pago") {
+    const motivo = p.pago_motivo ? `Último intento: ${escapar(p.pago_motivo)}. ` : "";
+    return `${motivo}Las unidades están reservadas hasta las ${HORA.format(new Date(p.expira))}.`;
+  }
+  if (p.estado === "caducado") return "No se pagó a tiempo: las unidades volvieron a la tienda.";
+  if (p.pago_motivo) return escapar(p.pago_motivo);
+  if (!PAGADO.has(p.estado)) return "";
+  if (!p.factura) return "La factura se está generando en segundo plano.";
+  return `Factura <b>${escapar(p.factura)}</b> · <button class="enlace" data-factura="${p.id}"
+    data-nombre="${escapar(p.factura)}.pdf">Descargar PDF</button>${p.factura_enviada ? " · enviada a tu correo" : ""}`;
+}
+
+// Lo que todavía puede cambiar solo: un pago en vuelo, la factura o su correo.
+const enMovimiento = (p) => p.estado === "pendiente_pago" || (PAGADO.has(p.estado) && !p.factura_enviada);
+
+function botonPagar(p) {
+  return p.estado === "pendiente_pago"
+    ? `<button class="btn-principal" data-pagar="${p.id}">Pagar ${EUR.format(p.total)}</button>` : "";
+}
+
+// El PDF necesita el token: un enlace normal no lo manda, así que se pide con
+// fetch y se entrega al navegador como descarga.
+async function descargarFactura(id, nombre) {
+  try {
+    const r = await fetch(`/api/pedidos/${id}/factura`, { headers: { Authorization: "Bearer " + sesion.token } });
+    if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error || `error ${r.status}`);
+    const url = URL.createObjectURL(await r.blob());
+    const a = Object.assign(document.createElement("a"), { href: url, download: nombre });
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+  } catch (e) {
+    aviso("No se pudo descargar la factura: " + e.message, "error");
+  }
+}
+
+function conectarPagar(v) {
+  for (const b of v.querySelectorAll("[data-pagar]")) {
+    b.addEventListener("click", () => { b.disabled = true; irAPagar(Number(b.dataset.pagar)); });
+  }
+  for (const b of v.querySelectorAll("[data-factura]")) {
+    b.addEventListener("click", () => descargarFactura(b.dataset.factura, b.dataset.nombre));
+  }
+}
+
+let refresco = null;
+
+function refrescarLuego(pintar, intento) {
+  clearTimeout(refresco);
+  if (intento >= 30) return;
+  const vista = rutaActual().vista;
+  refresco = setTimeout(() => {
+    if (rutaActual().vista === vista) pintar(intento + 1).catch(() => {});
+  }, 2000);
+}
+
+async function pintarPedidos(intento = 0) {
+  clearTimeout(refresco);
+  const v = $("vista-pedidos");
+  if (!sesion.token) {
+    v.innerHTML = `<p class="vacio">Entra en tu cuenta para ver tus pedidos.</p>`;
+    abrirAcceso();
+    return;
+  }
+  const pedidos = await api("/api/pedidos");
+  v.innerHTML = `<h1 class="titulo-vista">Mis pedidos</h1>` + (pedidos.length
+    ? pedidos.map((p) => `
+      <article class="pedido">
+        <header>
+          <b>Pedido #${p.id}</b>
+          <span class="tenue">${FECHA.format(new Date(p.creado))}</span>
+          ${etiquetaEstado(p.estado)}
+          <b class="pedido-total">${EUR.format(p.total)}</b>
+        </header>
+        ${tablaLineas(p.items)}
+        <div class="pedido-pie">
+          <p class="tenue">${notaPedido(p)}</p>
+          ${botonPagar(p)}
+        </div>
+      </article>`).join("")
+    : `<p class="vacio">Aún no has comprado nada. <a class="enlace" href="#/">Ir a la tienda</a></p>`);
+  conectarPagar(v);
+  if (pedidos.some(enMovimiento)) refrescarLuego(pintarPedidos, intento);
+}
+
+// A la vuelta de la pasarela el aviso del pago puede tardar un instante en
+// llegar: mientras el pedido siga pendiente, la página vuelve a preguntar.
+async function pintarConfirmacion(id, intento = 0) {
+  clearTimeout(refresco);
+  const v = $("vista-confirmacion");
+  const p = sesion.token ? (await api("/api/pedidos")).find((x) => x.id === id) : null;
+  if (!p) {
+    v.innerHTML = `<p class="vacio">No encuentro ese pedido. <a class="enlace" href="#/pedidos">Ver mis pedidos</a></p>`;
+    return;
+  }
+  const pagado = PAGADO.has(p.estado);
+  const titulo = pagado ? "Pago recibido"
+    : p.estado === "pendiente_pago" ? "Falta pagar tu pedido"
+    : p.estado === "caducado" ? "El plazo para pagar terminó" : `Pedido ${NOMBRE_ESTADO[p.estado] || p.estado}`;
+  v.innerHTML = `
+    <div class="confirmacion">
+      <div class="confirmacion-marca ${pagado ? "" : "pendiente"}" aria-hidden="true">${pagado ? "✓" : "…"}</div>
+      <h1>${titulo}</h1>
+      <p>Pedido <b>#${p.id}</b> por <b>${EUR.format(p.total)}</b> ${etiquetaEstado(p.estado)}</p>
+      <p>${notaPedido(p)}</p>
+      ${tablaLineas(p.items)}
+      <div class="acciones confirmacion-acciones">
+        ${botonPagar(p)}
+        <a class="${p.estado === "pendiente_pago" ? "btn-plano" : "btn-principal"}" href="#/">Seguir comprando</a>
+        <a class="btn-plano" href="#/pedidos">Ver mis pedidos</a>
+      </div>
+    </div>`;
+  conectarPagar(v);
+  if (enMovimiento(p)) refrescarLuego((n) => pintarConfirmacion(id, n), intento);
+}
+
+window.addEventListener("hashchange", mostrarRuta);
+mostrarRuta();

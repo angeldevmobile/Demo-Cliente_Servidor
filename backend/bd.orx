@@ -27,6 +27,13 @@ fn crear_esquema() {
         activo      BOOLEAN NOT NULL DEFAULT true
     )", []])
 
+    -- La ficha del producto. Columnas añadidas después: ALTER para que una
+    -- base ya creada las gane sin migraciones a mano. Las características
+    -- van separadas por '|'.
+    pasos.push(["ALTER TABLE productos
+                 ADD COLUMN IF NOT EXISTS detalle TEXT NOT NULL DEFAULT '',
+                 ADD COLUMN IF NOT EXISTS caracteristicas TEXT NOT NULL DEFAULT ''", []])
+
     pasos.push(["CREATE INDEX IF NOT EXISTS idx_prod_categoria ON productos (categoria)", []])
 
     -- El orden del catálogo. Sin este índice, pedir los 60 primeros de un
@@ -76,6 +83,29 @@ fn crear_esquema() {
 
     pasos.push(["CREATE INDEX IF NOT EXISTS idx_items_pedido ON pedido_items (pedido_id)", []])
 
+    -- El pago: un pedido nace 'pendiente_pago' con el stock reservado hasta
+    -- `expira`; la pasarela confirma con un aviso firmado.
+    pasos.push(["ALTER TABLE pedidos
+                 ADD COLUMN IF NOT EXISTS expira      TIMESTAMPTZ,
+                 ADD COLUMN IF NOT EXISTS cargo_id    TEXT,
+                 ADD COLUMN IF NOT EXISTS url_pago    TEXT,
+                 ADD COLUMN IF NOT EXISTS pago_motivo TEXT,
+                 ADD COLUMN IF NOT EXISTS pagado_en   TIMESTAMPTZ", []])
+    pasos.push(["CREATE INDEX IF NOT EXISTS idx_pedidos_por_pagar ON pedidos (expira)
+                 WHERE estado = 'pendiente_pago'", []])
+
+    -- Un aviso por id: la pasarela reenvía, y `veces` cuenta cuántas llegaron.
+    pasos.push(["CREATE TABLE IF NOT EXISTS pagos_avisos (
+        id        TEXT PRIMARY KEY,
+        evento    TEXT NOT NULL,
+        cargo_id  TEXT NOT NULL,
+        pedido_id INTEGER,
+        resultado TEXT NOT NULL,
+        veces     INTEGER NOT NULL DEFAULT 1,
+        recibido  TIMESTAMPTZ NOT NULL DEFAULT now(),
+        ultimo    TIMESTAMPTZ NOT NULL DEFAULT now()
+    )", []])
+
     -- Cola de trabajos en segundo plano.
     pasos.push(["CREATE TABLE IF NOT EXISTS trabajos (
         id           SERIAL PRIMARY KEY,
@@ -105,6 +135,13 @@ fn crear_esquema() {
         contenido TEXT NOT NULL,
         creada    TIMESTAMPTZ NOT NULL DEFAULT now()
     )", []])
+
+    -- La factura en PDF y si ya se mandó por correo.
+    pasos.push(["ALTER TABLE facturas
+                 ADD COLUMN IF NOT EXISTS pdf          BYTEA,
+                 ADD COLUMN IF NOT EXISTS bytes        INTEGER,
+                 ADD COLUMN IF NOT EXISTS enviada      TIMESTAMPTZ,
+                 ADD COLUMN IF NOT EXISTS correo_error TEXT", []])
 
     -- Informes de ventas. El archivo generado se guarda AQUÍ, no en el disco
     -- del worker: el worker que lo genera y la instancia web que lo sirve son
@@ -168,17 +205,30 @@ fn sembrar_catalogo(ruta_csv) {
 
     puestos = 0
     for p in csv.read(ruta_csv) {
-        db.exec(config.BD, "INSERT INTO productos (sku, nombre, descripcion, categoria, precio, stock)
-                            VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT (sku) DO NOTHING",
+        db.exec(config.BD, "INSERT INTO productos
+                                (sku, nombre, descripcion, categoria, precio, stock, detalle, caracteristicas)
+                            VALUES (?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT (sku) DO NOTHING",
                 [p["sku"], p["nombre"], p["descripcion"], p["categoria"],
-                 float(p["precio"]), int(p["stock"])])
+                 float(p["precio"]), int(p["stock"]), p["detalle"], p["caracteristicas"]])
         puestos = puestos + 1
     }
     return puestos
 }
 
+-- Una base sembrada antes de que existiera la ficha se queda con el detalle
+-- vacío: esto lo rellena desde el CSV, sin pisar lo que ya se haya editado.
+fn completar_fichas(ruta_csv) {
+    for p in csv.read(ruta_csv) {
+        db.exec(config.BD, "UPDATE productos SET detalle = ?, caracteristicas = ?
+                            WHERE sku = ? AND detalle = ''",
+                [p["detalle"], p["caracteristicas"], p["sku"]])
+    }
+}
+
 fn preparar(ruta_csv) {
     crear_esquema()
     sembrar_admin(config.ADMIN_EMAIL, config.ADMIN_PASS)
-    return sembrar_catalogo(ruta_csv)
+    puestos = sembrar_catalogo(ruta_csv)
+    completar_fichas(ruta_csv)
+    return puestos
 }

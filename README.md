@@ -8,14 +8,16 @@ la pregunta que viene después: **"¿aguanta un proyecto de verdad?"**. Backend
 repartido en varios archivos, autenticación con contraseñas, dinero, stock, y
 una operación que no puede salir a medias.
 
-> **Estado: ocho fases terminadas.** Catálogo, cuentas con JWT, compra
-> transaccional, panel de administración con informes en Excel y PDF, carga
-> masiva de un millón de productos, despliegue con balanceador y tres
-> instancias, cola de trabajos en Postgres con workers aparte, y una página
-> que enseña todo eso funcionando en vivo.
+> **Estado: las diez fases terminadas.** Catálogo, cuentas con JWT, compra
+> transaccional, pago con una pasarela simulada y webhooks firmados, factura
+> en PDF enviada por correo, panel de
+> administración con informes en Excel y PDF, carga masiva de un millón de
+> productos, despliegue con balanceador y tres instancias, cola de trabajos en
+> Postgres con workers aparte, y una página que enseña todo eso en vivo.
 >
-> **Necesita Orion 0.1.7 o posterior** (`process.version`, `process.memory`
-> y `process.uptime`, que usa la fase 8). Construirla destapó varios fallos del
+> **Necesita Orion 0.1.8 o posterior**: la pasarela monta sus propias rutas
+> pasando funciones de su módulo y usa los timeouts de `net`, y la factura
+> sale con `mail.send` y su PDF adjunto. Construirla destapó varios fallos del
 > lenguaje (`and`/`or` sin cortocircuito, `attempt` que no capturaba dentro de
 > `serve`, errores de Postgres sin mensaje…), que se corrigieron en Orion y no
 > con rodeos aquí. Ver el CHANGELOG de Orion.
@@ -35,7 +37,9 @@ transacciones, y es lo que separa un backend de un juguete.
 | El dinero no se pierde | Checkout dentro de una transacción, con `ROLLBACK` si falla |
 | El stock no se vende dos veces | Bloqueo de fila en Postgres, probado con compradores simultáneos |
 | Los informes salen del mismo lenguaje | Excel y PDF generados por Orion, sin librerías externas |
+| La factura llega sola | PDF generado por un worker y enviado por correo con el PDF adjunto |
 | Los datos entran rápido | Catálogo de un millón de filas por `COPY`, con la RAM medida |
+| Un pago no se cuenta dos veces | Webhook firmado con HMAC, reenviado a propósito, aplicado una sola vez |
 | Todo eso se puede ver | `/monitor.html`: procesos, cola y carrera en vivo, sin leer logs |
 
 ## Estructura
@@ -56,7 +60,13 @@ comercio/
 │   ├── admin.orx        productos, stock, pedidos y petición de informes
 │   ├── informes.orx     informes de ventas en Excel y PDF
 │   ├── importar.orx     carga masiva del catálogo por COPY
-│   └── monitor.orx      procesos, cola, carrera y búsqueda medida
+│   ├── monitor.orx      procesos, cola, carrera y búsqueda medida
+│   ├── pagos.orx        cargo, aviso firmado, caducidad y conciliación
+│   └── facturas.orx     factura en PDF, correo con el adjunto y descarga
+├── pasarela/            la pasarela simulada, otro servicio de Orion
+│   ├── pasarela.orx     cargos, página de pago y avisos firmados
+│   ├── main.orx         la pasarela como servidor aparte
+│   └── pagar.html       la página donde se paga
 ├── frontend/
 │   ├── index.html       tienda y carrito
 │   ├── admin.html       panel de administración
@@ -76,7 +86,7 @@ comercio/
 ├── datos/
 │   └── catalogo.csv     catálogo de siembra
 ├── despliegue/nginx.conf
-├── docker-compose.yml   Postgres, tres instancias, dos workers y nginx
+├── docker-compose.yml   Postgres, tres instancias, dos workers, pasarela, Mailpit y nginx
 ├── render.yaml          despliegue en Render (Blueprint)
 └── Dockerfile
 ```
@@ -89,15 +99,17 @@ archivo, y esa es justamente la intención.
 
 ```
 usuarios     id, email, hash_pass, nombre, rol, creado
-productos    id, sku, nombre, descripcion, categoria, precio, stock, activo
+productos    id, sku, nombre, descripcion, categoria, precio, stock, activo,
+             detalle, caracteristicas (separadas por '|'), busqueda (tsvector)
 carritos     id, usuario_id, creado
 lineas       id, carrito_id, producto_id, cantidad
 pedidos      id, usuario_id, total, estado, creado
 pedido_items id, pedido_id, producto_id, cantidad, precio_unitario
 trabajos     id, tipo, datos, estado, intentos, ejecutar_en, tomado_por, …
-facturas     id, pedido_id, numero, contenido, creada
+facturas     id, pedido_id, numero, contenido, pdf (BYTEA), bytes, enviada, …
 informes     id, formato, desde, hasta, estado, contenido (BYTEA), bytes, …
 procesos     nombre, tipo, version, pid, arranco, senal, rss, pico
+pagos_avisos id, evento, cargo_id, pedido_id, resultado, veces, recibido
 ```
 
 El precio se guarda **también en la línea del pedido**. Un pedido de ayer no
@@ -114,12 +126,16 @@ leerlo, pero las sumas de dinero las hace Postgres.
 | `POST` | `/api/registro` | Crea una cuenta |
 | `POST` | `/api/login` | Devuelve el JWT |
 | `GET` | `/api/productos` | Catálogo, con búsqueda y filtros |
-| `GET` | `/api/productos/:sku` | Ficha de un producto |
+| `GET` | `/api/productos/:sku` | Ficha: detalle, características y relacionados |
 | `GET` | `/api/carrito` | Carrito del usuario |
-| `POST` | `/api/carrito` | Añade una línea |
+| `POST` | `/api/carrito` | Añade un producto, con su cantidad |
+| `PUT` | `/api/carrito/:id` | Cambia la cantidad de una línea |
 | `DELETE` | `/api/carrito/:id` | Quita una línea |
 | `POST` | `/api/checkout` | **Compra: la operación que importa** |
-| `GET` | `/api/pedidos` | Historial del usuario |
+| `GET` | `/api/pedidos` | Historial del usuario, con sus líneas y su factura |
+| `POST` | `/api/pedidos/:id/pagar` | Crea (o reutiliza) el cargo y devuelve la URL de pago |
+| `GET` | `/api/pedidos/:id/factura` | El PDF de la factura, solo para el dueño del pedido |
+| `POST` | `/api/pagos/aviso` | Webhook de la pasarela: sin JWT, lo autentica la firma |
 | `GET` | `/api/admin/resumen` | Ventas de hoy y del mes, pedidos por enviar, agotados, cola |
 | `GET` | `/api/admin/productos` | Productos, también los retirados |
 | `POST` | `/api/admin/productos` | Alta de producto |
@@ -143,16 +159,18 @@ exige el rol `admin` en el token (403 si no).
 
 ## El checkout, que es el corazón
 
-Cinco sentencias en **una** transacción, y el orden importa: el descuento de
-stock va primero porque es lo único que puede fallar.
+Cuatro sentencias en **una** transacción, y el orden importa: el descuento de
+stock va primero porque es lo único que puede fallar. El pedido nace
+`pendiente_pago`: el stock queda reservado y el cobro lo confirma después la
+pasarela (ver "El pago").
 
 ```sql
 BEGIN
   UPDATE productos p SET stock = p.stock - l.cantidad     -- puede fallar aquí
     FROM lineas l WHERE l.producto_id = p.id AND l.carrito_id = ?
-  INSERT INTO pedidos (usuario_id, total) SELECT ?, SUM(p.precio * l.cantidad) ...
+  INSERT INTO pedidos (usuario_id, total, estado, expira)
+    SELECT ?, SUM(p.precio * l.cantidad), 'pendiente_pago', now() + '15 minutes' ...
   INSERT INTO pedido_items ... SELECT currval('pedidos_id_seq'), ...
-  INSERT INTO trabajos (tipo, datos) SELECT 'factura', ...  -- la factura, a la cola
   DELETE FROM lineas WHERE carrito_id = ?
 COMMIT
 ```
@@ -215,7 +233,9 @@ Las otras demos usan SQLite y les sobra. Aquí hace falta lo que SQLite no da:
 1. ✅ **Base**: esquema, conexión, catálogo, búsqueda, filtros y frontend.
 2. ✅ **Cuentas**: registro, login con argon2id, JWT y rutas protegidas.
 3. ✅ **Carrito y checkout**: la transacción, y el script que la pone a prueba
-   con compradores simultáneos.
+   con compradores simultáneos. La tienda tiene ficha de producto (con
+   cantidad), carrito con − y +, confirmación de compra y "Mis pedidos", donde
+   la factura que genera el worker aparece sola a los pocos segundos.
 4. ✅ **Panel de administración**: productos, stock, pedidos e informes en
    Excel y PDF generados por un worker.
 5. ✅ **Carga masiva**: un millón de productos por `COPY`, con el tiempo, la
@@ -223,25 +243,76 @@ Las otras demos usan SQLite y les sobra. Aquí hace falta lo que SQLite no da:
 6. ✅ **Despliegue**: `docker compose up` levanta Postgres, **tres instancias**
    web, **dos workers** y un nginx que reparte.
 7. ✅ **Cola de trabajos**: tabla en Postgres con reclamación atómica, workers
-   como procesos aparte, y la factura encolada dentro de la transacción de la
-   compra.
+   como procesos aparte, y la factura encolada en la misma sentencia que
+   confirma el pago.
 8. ✅ **Monitor**: `/monitor.html` enseña en vivo los procesos, la cola,
    la carrera por la última unidad y la búsqueda medida.
+9. ✅ **Pago**: pasarela simulada, aviso firmado con HMAC e idempotente,
+   caducidad de los pedidos sin pagar y conciliación de avisos perdidos.
+10. ✅ **Factura**: PDF generado por el worker al confirmarse el pago,
+    descargable desde "Mis pedidos" y enviado por correo con el PDF adjunto.
 
 Mientras una fase no esté, sus controles no aparecen en la página: es
 preferible a enseñar botones que devuelven 404. El interruptor está arriba de
 `frontend/app.js`.
 
-### Lo que viene
+## El pago
 
-9. ⬜ **Pago**: una pasarela simulada, escrita también en Orion, que imita a
-   las que se usan en Perú (Culqi, Izipay, Niubiz, Mercado Pago). El pedido
-   nace como `pendiente_pago` con el stock reservado, la pasarela avisa por un
-   webhook firmado con HMAC, los avisos repetidos se cuentan una sola vez, y un
-   pedido sin pagar caduca y devuelve el stock.
-10. ⬜ **Factura de verdad**: en PDF, descargable desde "Mis pedidos" y enviada
-    por correo con el PDF adjunto. Antes hay que añadir los adjuntos al módulo
-    `mail` de Orion.
+Una pasarela simulada, escrita también en Orion, que imita a las que se usan
+en Perú (Culqi, Izipay, Niubiz, Mercado Pago): la tienda crea un cargo, el
+cliente paga en la página de la pasarela, y la pasarela avisa a la tienda.
+
+```
+tienda ──POST /api/cargos──▶ pasarela         (con la clave de la tienda)
+cliente ──────────────────▶ /pasarela/pagar/cg_…   (tarjeta de prueba)
+pasarela ──POST /api/pagos/aviso──▶ tienda    (firmado, y dos veces)
+```
+
+- **Comprar reserva, no cobra.** El pedido nace `pendiente_pago` con el stock
+  descontado hasta `expira` (15 minutos, `ORION_PAGO_MINUTOS`). Lo que lo
+  confirma es el aviso de la pasarela, nunca que el navegador vuelva a la
+  tienda: esa vuelta la puede fingir cualquiera.
+- **El aviso va firmado.** `X-Pasarela-Firma: t=…,v1=…` es un HMAC-SHA256 de
+  `t.cuerpo` con un secreto compartido. Sin firma, 400; con firma mala o con
+  más de 5 minutos, 401. `crypto.verify` compara en tiempo constante.
+- **Se cuenta una sola vez.** La pasarela manda cada aviso **dos veces** a
+  propósito, como hacen las de verdad. Registrar el aviso, pasar el pedido a
+  `pagado` y encolar la factura van en **una sola sentencia**; el repetido solo
+  suma a `veces`. Se ve en el monitor.
+- **Lo que no se paga caduca.** El worker devuelve el stock de los pedidos
+  vencidos, en la misma sentencia que los marca `caducado`. Si el dinero llega
+  después, el pedido queda marcado para devolverlo, no se pierde en silencio.
+- **Un aviso perdido se recupera.** Si la tienda estaba caída cuando avisaron,
+  el worker pregunta a la pasarela por los cargos que llevan más de un minuto
+  sin respuesta (conciliación).
+- **Reintentar no cobra dos veces.** Pedir el pago otra vez devuelve el mismo
+  cargo, y un cargo pagado no se puede volver a pagar.
+
+Tarjetas de prueba: `4111 1111 1111 1111` se aprueba, `4000 0000 0000 0002`
+la rechaza el banco y `4000 0000 0000 9995` no tiene fondos (cualquier otro
+número válido por Luhn también se aprueba). Caducidad futura y CVC de 3 cifras.
+
+En el compose la pasarela es **otro servicio** (`pasarela`, detrás de nginx en
+`/pasarela/`). Sin `ORION_PASARELA_URL`, como en Render, se monta dentro de la
+misma tienda con `pasarela.montar(router)`: el mismo código, sin un segundo
+proceso. Cambiarla por una de verdad es cambiar `pagos.orx`, no el checkout.
+
+## La factura
+
+Cuando el pago se confirma, el worker genera la factura en **PDF** con
+`pdf.build` (con el color de la marca, `ORION_COLOR_MARCA`) y la guarda en
+Postgres. En la misma sentencia encola el correo, y **solo la primera vez**:
+si el trabajo de la factura se reintenta, el cliente no recibe dos correos.
+
+Otro trabajo la manda con `mail.send`, con texto y HTML alternativos y el PDF
+adjunto, sin pasar por disco: Postgres la devuelve en base64 y así viaja. Si
+el servidor de correo falla, el trabajo se reintenta como cualquier otro y
+el error queda en `facturas.correo_error`.
+
+Sin `ORION_SMTP_HOST` no se manda nada y no es un error: la factura sigue en
+"Mis pedidos", donde el cliente la descarga. En el compose el correo va a
+**Mailpit**, un buzón falso: abre **http://localhost:8025** y ahí están los
+correos de cada compra con su PDF.
 
 ## Monitor
 
@@ -291,7 +362,10 @@ Lo que hace:
 - **Informes**: ventas por periodo en **Excel** (cuatro hojas: resumen, por
   día, por producto y pedidos) y en **PDF** (resumen, ventas por producto con
   total y días con ventas), generados por Orion sin librerías externas.
-- **Importar**: un CSV de hasta 50 MB desde el navegador.
+- **Importar**: un CSV de hasta 50 MB desde el navegador. Columnas
+  obligatorias `sku,nombre,descripcion,categoria,precio,stock`, en cualquier
+  orden; `detalle` y `caracteristicas` son opcionales, y si no vienen, la ficha
+  que ya tenía cada producto se conserva. `datos/catalogo.csv` sirve tal cual.
 
 **Los informes van por la cola.** Pedir un informe crea el informe y su
 trabajo en una sola sentencia, y el worker lo genera y guarda el archivo en
@@ -376,6 +450,8 @@ eso, 0,08 ms.
         +-------------+-------------+
                       |
                   PostgreSQL  <---- worker1, worker2   (dos procesos de fondo)
+                      ^
+                      +---- pasarela       (/pasarela/ en nginx, otro proceso)
 ```
 
 Cada respuesta JSON lleva la cabecera `X-Orion-Instancia` con el nombre de la
@@ -417,10 +493,10 @@ factura, mandar el correo, avisar al almacén. Van a una cola.
 con dos instancias cada una tendría los suyos y un reinicio se llevaría lo
 pendiente. Aquí los trabajos son filas de una tabla.
 
-**El trabajo se encola dentro de la transacción de la compra.** Si la compra
-se revierte, el trabajo no existe; si se confirma, existe seguro. Encolarlo
-después del commit abriría una ventana en la que el proceso puede morir
-dejando un pedido sin factura.
+**El trabajo se encola en la misma sentencia que confirma el pago.** Si la
+confirmación no se aplica, el trabajo no existe; si se aplica, existe seguro.
+Encolarlo después abriría una ventana en la que el proceso puede morir
+dejando un pedido pagado sin factura.
 
 **La reclamación es una sola sentencia:**
 
@@ -470,7 +546,8 @@ uno que ya tengas instalado:
 docker compose up -d --build
 ```
 
-→ http://localhost:8086 · panel en `/admin.html` · monitor en `/monitor.html`
+→ http://localhost:8086 · panel en `/admin.html` · monitor en `/monitor.html` ·
+correos en http://localhost:8025
 
 La imagen descarga el binario de Orion de GitHub Releases; la versión va en
 `ORION_VERSION`, arriba del `Dockerfile`.
@@ -504,6 +581,17 @@ ORION_BD="postgres://usuario:clave@host:5432/base" orion watch backend/main.orx
 | `ORION_TMP` | `tmp` | Carpeta de archivos de paso (informes a medio generar) |
 | `ORION_INSTANCIA` | `local` | Nombre de la instancia web, el que sale en el monitor |
 | `ORION_WORKER` | `worker-1` | Nombre del worker, el que sale en la cola |
+| `ORION_PASARELA_URL` | (vacía: integrada) | API de la pasarela; vacía, se monta en este proceso bajo `/pasarela` |
+| `ORION_URL_INTERNA` | `http://127.0.0.1:PORT` | Desde donde la pasarela llama al webhook |
+| `ORION_PASARELA_CLAVE` | valor de desarrollo | Clave de la tienda ante la pasarela (igual en los dos lados) |
+| `ORION_PASARELA_SECRETO` | valor de desarrollo | Secreto con el que se firman los avisos (igual en los dos lados) |
+| `ORION_PAGO_MINUTOS` | `15` | Cuánto se reserva el stock de un pedido sin pagar |
+| `ORION_SMTP_HOST` | (vacía: sin correo) | Servidor SMTP para mandar las facturas |
+| `ORION_SMTP_PUERTO` | `587` | Su puerto |
+| `ORION_SMTP_SEGURIDAD` | `starttls` | `tls`, `starttls` o `ninguna` |
+| `ORION_SMTP_USUARIO` / `ORION_SMTP_CLAVE` | (vacías) | Credenciales, si el servidor las pide |
+| `ORION_CORREO_DE` | `Comercio <tienda@comercio.test>` | Remitente de las facturas |
+| `ORION_COLOR_MARCA` | `#1f6f4a` | Color de las facturas y los informes |
 
 Las credenciales del `docker-compose.yml` son de juguete y están a la vista a
 propósito: la base vive en un contenedor local y no guarda nada real.
@@ -531,6 +619,12 @@ Lo que hay que saber del plan gratuito:
   app ya está hecha para escalar (JWT, cola en Postgres, nada en disco), pero
   varias instancias en Render son de pago.
 - Las fechas van en **UTC**: «ventas de hoy» cambia de día a las 19:00 de Perú.
+- **Sin correo**: no hay servidor SMTP, así que las facturas no se mandan;
+  se descargan desde "Mis pedidos". Para mandarlas, añade las variables
+  `ORION_SMTP_*` de un proveedor (Brevo, Resend, el SMTP de tu dominio…).
+- **La pasarela va dentro**: sin `ORION_PASARELA_URL`, la simulada se monta en
+  el mismo proceso bajo `/pasarela`, y su clave y su secreto los genera
+  Render.
 
 ## Lo que ya se puede probar
 

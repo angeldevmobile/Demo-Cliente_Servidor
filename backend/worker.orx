@@ -8,7 +8,9 @@ use "backend/config" as config
 use "backend/bd" as bd
 use "backend/cola" as cola
 use "backend/informes" as informes
+use "backend/facturas" as facturas
 use "backend/monitor" as monitor
+use "backend/pagos" as pagos
 
 NOMBRE  = entorno.get("ORION_WORKER", "worker-1")
 DESCANSO = entorno.get("ORION_DESCANSO", "500ms")
@@ -16,46 +18,13 @@ DESCANSO = entorno.get("ORION_DESCANSO", "500ms")
 -- servidor); un número concreto sirve para las pruebas.
 TOPE = int(entorno.get("ORION_TOPE", "0"))
 
-fn factura(datos_json) {
-    d = json.parse(datos_json)
-    pedido_id = int(d["pedido_id"])
-
-    p = db.first(config.BD, "SELECT p.id, p.total, p.creado, u.nombre, u.email
-                             FROM pedidos p JOIN usuarios u ON u.id = p.usuario_id
-                             WHERE p.id = ?", [pedido_id])
-    if p == null {
-        error("el pedido " + str(pedido_id) + " no existe")
-    }
-
-    lineas = db.query(config.BD, "SELECT i.cantidad, i.precio_unitario, pr.sku, pr.nombre
-                                  FROM pedido_items i JOIN productos pr ON pr.id = i.producto_id
-                                  WHERE i.pedido_id = ? ORDER BY i.id", [pedido_id])
-
-    texto = "FACTURA " + numero(pedido_id) + "\n"
-    texto = texto + "Cliente: " + p["nombre"] + " <" + p["email"] + ">\n"
-    texto = texto + "Fecha:   " + str(p["creado"]) + "\n\n"
-    for l in lineas {
-        texto = texto + "  " + l["sku"] + "  " + l["nombre"]
-              + "  x" + str(l["cantidad"])
-              + "  " + str(l["precio_unitario"]) + " EUR\n"
-    }
-    texto = texto + "\nTOTAL: " + str(p["total"]) + " EUR\n"
-
-    -- ON CONFLICT: si el worker muere justo después de escribir la factura
-    -- pero antes de marcar el trabajo, el reintento no duplica nada.
-    db.exec(config.BD, "INSERT INTO facturas (pedido_id, numero, contenido)
-                        VALUES (?, ?, ?)
-                        ON CONFLICT (pedido_id) DO UPDATE SET contenido = EXCLUDED.contenido",
-            [pedido_id, numero(pedido_id), texto])
-}
-
-fn numero(pedido_id) {
-    return "F-2026-" + str(pedido_id)
-}
-
 fn procesar(t) {
     if t["tipo"] == "factura" {
-        factura(t["datos"])
+        facturas.generar(int(json.parse(t["datos"])["pedido_id"]))
+        return
+    }
+    if t["tipo"] == "correo_factura" {
+        show "  " + facturas.enviar(int(json.parse(t["datos"])["pedido_id"]))
         return
     }
     if t["tipo"] == "informe" {
@@ -87,6 +56,7 @@ hechos = 0
 rescate = tw.clock()
 monitor.latido(NOMBRE, "worker")
 latido = tw.clock()
+cobros = tw.clock()
 
 while yes {
     -- De vez en cuando, devolver a la cola lo que quedó atascado en un worker
@@ -94,6 +64,24 @@ while yes {
     if tw.elapsed(rescate) > 60.0 {
         cola.rescatar(5)
         rescate = tw.clock()
+    }
+
+    -- Cada 30 s: devolver el stock de lo que no se pagó a tiempo y preguntar a
+    -- la pasarela por los pagos cuyo aviso no llegó.
+    if tw.elapsed(cobros) > 30.0 {
+        attempt {
+            n = pagos.caducar()
+            if n > 0 {
+                show "  " + str(n) + " pedido(s) sin pagar caducados; stock devuelto"
+            }
+            n = pagos.conciliar()
+            if n > 0 {
+                show "  " + str(n) + " pago(s) recuperados por conciliación"
+            }
+        } handle err {
+            show "  pagos: " + str(err)
+        }
+        cobros = tw.clock()
     }
 
     -- Señal de vida cada 5 s, no en cada vuelta: con la cola vacía el bucle

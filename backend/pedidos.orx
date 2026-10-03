@@ -3,9 +3,15 @@ use "db" as db
 use "backend/config" as config
 use "backend/carrito" as carrito
 
+-- Los estados que cuentan como venta. Un pedido sin pagar reserva stock,
+-- pero no es dinero todavía.
+ESTADOS_VENTA = "('pagado', 'enviado', 'entregado')"
+VENDIDO = "estado IN " + ESTADOS_VENTA
+
 -- La compra entera o nada, en una transacción. El descuento de stock va primero:
 -- si no alcanza, el CHECK (stock >= 0) la revierte entera. El propio UPDATE
 -- bloquea las filas, así dos compras del mismo producto se ponen en fila.
+-- El pedido nace sin pagar y con el stock reservado hasta `expira`.
 fn comprar(usuario_id) {
     cid = carrito.carrito_de(usuario_id)
     cuenta = db.first(config.BD, "SELECT COUNT(*) AS n FROM lineas WHERE carrito_id = ?", [cid])
@@ -17,10 +23,11 @@ fn comprar(usuario_id) {
         ["UPDATE productos p SET stock = p.stock - l.cantidad
           FROM lineas l WHERE l.producto_id = p.id AND l.carrito_id = ?", [cid]],
 
-        ["INSERT INTO pedidos (usuario_id, total)
-          SELECT ?, COALESCE(SUM(p.precio * l.cantidad), 0)
+        ["INSERT INTO pedidos (usuario_id, total, estado, expira)
+          SELECT ?, COALESCE(SUM(p.precio * l.cantidad), 0), 'pendiente_pago',
+                 now() + (? || ' minutes')::interval
           FROM lineas l JOIN productos p ON p.id = l.producto_id
-          WHERE l.carrito_id = ?", [usuario_id, cid]],
+          WHERE l.carrito_id = ?", [usuario_id, str(config.PAGO_MINUTOS), cid]],
 
         -- `currval` devuelve el id que acaba de generar ESTA sesión, así que
         -- no se confunde con un pedido de otro comprador simultáneo.
@@ -28,11 +35,6 @@ fn comprar(usuario_id) {
           SELECT currval('pedidos_id_seq'), l.producto_id, l.cantidad, p.precio
           FROM lineas l JOIN productos p ON p.id = l.producto_id
           WHERE l.carrito_id = ?", [cid]],
-
-        -- Bandeja de salida: el trabajo se encola dentro de la transacción, así
-        -- existe si y solo si la compra se confirmó.
-        ["INSERT INTO trabajos (tipo, datos)
-          SELECT 'factura', '{\"pedido_id\": ' || currval('pedidos_id_seq') || '}'", []],
 
         ["DELETE FROM lineas WHERE carrito_id = ?", [cid]]
     ]
@@ -71,7 +73,7 @@ fn sin_stock(carrito_id) {
 }
 
 fn ultimo(usuario_id) {
-    p = db.first(config.BD, "SELECT id, total, estado, creado FROM pedidos
+    p = db.first(config.BD, "SELECT id, total, estado, creado, expira FROM pedidos
                              WHERE usuario_id = ? ORDER BY id DESC LIMIT 1", [usuario_id])
     if p == null {
         return null
@@ -88,10 +90,14 @@ fn items(pedido_id) {
         WHERE i.pedido_id = ? ORDER BY i.id", [pedido_id])
 }
 
+-- La factura la genera el worker cuando llega el pago: hasta entonces sale
+-- null, y la página dice que se está generando.
 fn mios(usuario_id) {
     fuera = []
-    for p in db.query(config.BD, "SELECT id, total, estado, creado FROM pedidos
-                                  WHERE usuario_id = ? ORDER BY id DESC LIMIT 20", [usuario_id]) {
+    for p in db.query(config.BD, "SELECT p.id, p.total, p.estado, p.creado, p.expira, p.pago_motivo,
+                                         f.numero AS factura, f.enviada IS NOT NULL AS factura_enviada
+                                  FROM pedidos p LEFT JOIN facturas f ON f.pedido_id = p.id
+                                  WHERE p.usuario_id = ? ORDER BY p.id DESC LIMIT 20", [usuario_id]) {
         p["items"] = items(p["id"])
         fuera.push(p)
     }

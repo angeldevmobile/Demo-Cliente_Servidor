@@ -56,14 +56,32 @@
       <h2>La cola de trabajos</h2>
       <div id="cola-cuentas" class="chips"></div>
     </div>
-    <p class="tenue">Cada compra encola su factura <em>dentro</em> de la transacción. Los workers
-      reclaman trabajos con <code>FOR UPDATE SKIP LOCKED</code>: dos workers nunca se llevan el mismo.</p>
+    <p class="tenue">Cada pago confirmado encola su factura <em>en la misma sentencia</em> que marca el
+      pedido como pagado. Los workers reclaman trabajos con <code>FOR UPDATE SKIP LOCKED</code>: dos
+      workers nunca se llevan el mismo.</p>
     <div id="por-worker" class="chips"></div>
     <div class="tabla-envoltorio">
       <table class="tabla">
         <thead><tr><th>#</th><th>Tipo</th><th>Estado</th><th>Worker</th>
           <th class="num">Esperó</th><th class="num">Tardó</th><th class="num">Hace</th></tr></thead>
         <tbody id="trabajos"></tbody>
+      </table>
+    </div>
+  </section>
+
+  <!-- Pagos -->
+  <section class="bloque">
+    <div class="bloque-cabeza">
+      <h2>Avisos de la pasarela</h2>
+    </div>
+    <p class="tenue">La pasarela confirma cada pago con un webhook firmado con HMAC-SHA256, y lo manda
+      <em>dos veces</em> a propósito, como hacen las de verdad. La tienda verifica la firma y cuenta
+      cada aviso una sola vez: el segundo solo suma a <b>veces</b>.</p>
+    <div class="tabla-envoltorio">
+      <table class="tabla">
+        <thead><tr><th>Aviso</th><th>Evento</th><th>Pedido</th><th>Resultado</th>
+          <th class="num">Veces</th><th class="num">Hace</th></tr></thead>
+        <tbody id="avisos"></tbody>
       </table>
     </div>
   </section>

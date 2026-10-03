@@ -1,0 +1,145 @@
+-- Facturas: el PDF, el correo con el PDF adjunto y la descarga. Las genera el
+-- worker cuando llega el pago; la web solo las sirve.
+use "db" as db
+use "fs" as fs
+use "pdf" as pdf
+use "mail" as mail
+use "crypto" as crypto
+use "format" as formato
+use "backend/config" as config
+
+fn eur(n) {
+    return formato.number(n, 2, ".", ",") + " €"
+}
+
+fn pedido(pedido_id) {
+    return db.first(config.BD, "
+        SELECT p.id, p.total, to_char(p.creado, 'YYYY') AS anio,
+               to_char(p.pagado_en, 'DD/MM/YYYY HH24:MI') AS pagado,
+               u.nombre, u.email
+        FROM pedidos p JOIN usuarios u ON u.id = p.usuario_id
+        WHERE p.id = ?", [pedido_id])
+}
+
+fn numero(p) {
+    return "F-" + p["anio"] + "-" + str(p["id"])
+}
+
+fn pdf_de(ruta, p, lineas) {
+    filas = []
+    for l in lineas {
+        filas.push({ "SKU": l["sku"], "Producto": l["nombre"], "Cantidad": l["cantidad"],
+                     "Precio": l["precio_unitario"], "Importe": l["importe"] })
+    }
+    filas.push({ "SKU": "TOTAL", "Producto": "", "Cantidad": "", "Precio": "", "Importe": p["total"] })
+    dinero = { "format": "money" }
+    pdf.build(ruta, [
+        { "title": "Factura " + numero(p), "color": config.COLOR_MARCA },
+        { "fields": { "Cliente": p["nombre"], "Email": p["email"],
+                      "Pedido": "#" + str(p["id"]), "Pagado": p["pagado"] } },
+        { "table": filas, "total": yes, "header_bg": config.COLOR_MARCA, "header_color": "white",
+          "columns": { "Cantidad": { "format": "integer" }, "Precio": dinero, "Importe": dinero } },
+        { "text": "Importes con IVA incluido.", "color": "gray" }
+    ], { "footer": "Comercio · factura generada por Orion", "author": "Comercio",
+         "subject": "Factura " + numero(p) })
+}
+
+-- Genera el PDF y lo guarda. El correo se encola en la MISMA sentencia y solo
+-- la primera vez (`nueva`): si el trabajo se reintenta, no se manda dos veces.
+fn generar(pedido_id) {
+    p = pedido(pedido_id)
+    if p == null {
+        error("el pedido " + str(pedido_id) + " no existe")
+    }
+    lineas = db.query(config.BD, "
+        SELECT pr.sku, pr.nombre, i.cantidad, i.precio_unitario,
+               (i.precio_unitario * i.cantidad) AS importe
+        FROM pedido_items i JOIN productos pr ON pr.id = i.producto_id
+        WHERE i.pedido_id = ? ORDER BY i.id", [pedido_id])
+
+    fs.mkdir(config.TMP)
+    ruta = fs.join(config.TMP, "factura-" + str(pedido_id) + "-" + crypto.uuid() + ".pdf")
+    pdf_de(ruta, p, lineas)
+    b64 = fs.read_b64(ruta)
+    bytes = fs.size(ruta)
+    fs.delete(ruta)
+
+    texto = "FACTURA " + numero(p) + "\nCliente: " + p["nombre"] + " <" + p["email"] + ">\n"
+    for l in lineas {
+        texto = texto + "  " + l["sku"] + "  " + l["nombre"] + "  x" + str(l["cantidad"])
+              + "  " + eur(l["importe"]) + "\n"
+    }
+    texto = texto + "TOTAL: " + eur(p["total"]) + "\n"
+
+    db.first(config.BD, "
+        WITH f AS (
+            INSERT INTO facturas (pedido_id, numero, contenido, pdf, bytes)
+            VALUES (?, ?, ?, decode(?, 'base64'), ?)
+            ON CONFLICT (pedido_id) DO UPDATE
+                SET contenido = EXCLUDED.contenido, pdf = EXCLUDED.pdf, bytes = EXCLUDED.bytes
+            RETURNING (xmax = 0) AS nueva
+        )
+        INSERT INTO trabajos (tipo, datos)
+        SELECT 'correo_factura', '{\"pedido_id\": ' || ? || '}' FROM f WHERE nueva
+        RETURNING id", [pedido_id, numero(p), texto, b64, bytes, str(pedido_id)])
+}
+
+-- El correo con el PDF adjunto. Sin servidor SMTP configurado no se manda
+-- nada, y no es un error: la factura sigue en "Mis pedidos".
+fn enviar(pedido_id) {
+    if config.SMTP["servidor"] == "" {
+        return "sin correo configurado"
+    }
+    f = db.first(config.BD, "
+        SELECT f.numero, f.pdf, p.total, u.nombre, u.email
+        FROM facturas f JOIN pedidos p ON p.id = f.pedido_id JOIN usuarios u ON u.id = p.usuario_id
+        WHERE f.pedido_id = ?", [pedido_id])
+    if f == null or f["pdf"] == null {
+        error("la factura del pedido " + str(pedido_id) + " no está generada")
+    }
+
+    -- Un dict nuevo: asignar config.SMTP lo compartiría y se ensuciaría.
+    opciones = {}
+    for k in config.SMTP.keys() {
+        opciones[k] = config.SMTP[k]
+    }
+    opciones["de"] = config.CORREO_DE
+    opciones["para"] = f["nombre"] + " <" + f["email"] + ">"
+    opciones["asunto"] = "Tu factura " + f["numero"]
+    opciones["texto"] = "Hola, " + f["nombre"] + ":\n\nGracias por tu compra. Te adjuntamos la factura "
+                      + f["numero"] + " por " + eur(f["total"]) + ".\n\nComercio"
+    opciones["html"] = "<p>Hola, " + f["nombre"] + ":</p><p>Gracias por tu compra. Te adjuntamos la factura <b>"
+                     + f["numero"] + "</b> por <b>" + eur(f["total"]) + "</b>.</p>"
+                     + "<p style=\"color:" + config.COLOR_MARCA + "\">Comercio</p>"
+    opciones["adjuntos"] = [{ "base64": f["pdf"], "nombre": f["numero"] + ".pdf", "tipo": "application/pdf" }]
+    opciones["timeout"] = 20
+
+    attempt {
+        mail.send(opciones)
+    } handle err {
+        db.exec(config.BD, "UPDATE facturas SET correo_error = ? WHERE pedido_id = ?", [str(err), pedido_id])
+        error(str(err))
+    }
+    db.exec(config.BD, "UPDATE facturas SET enviada = now(), correo_error = NULL WHERE pedido_id = ?", [pedido_id])
+    return "enviada a " + f["email"]
+}
+
+-- Como los informes: cada instancia baja el PDF de Postgres la primera vez y
+-- lo reutiliza. Solo el dueño del pedido puede bajarlo.
+fn descargar(usuario_id, pedido_id) {
+    f = db.first(config.BD, "
+        SELECT f.numero FROM facturas f JOIN pedidos p ON p.id = f.pedido_id
+        WHERE f.pedido_id = ? AND p.usuario_id = ? AND f.pdf IS NOT NULL", [pedido_id, usuario_id])
+    if f == null {
+        return null
+    }
+    fs.mkdir(config.TMP)
+    ruta = fs.join(config.TMP, "factura-" + str(pedido_id) + ".pdf")
+    if not fs.exists(ruta) {
+        fila = db.first(config.BD, "SELECT pdf FROM facturas WHERE pedido_id = ?", [pedido_id])
+        parcial = ruta + "." + crypto.uuid()
+        fs.write_b64(parcial, fila["pdf"])
+        fs.move(parcial, ruta)
+    }
+    return { "ruta": ruta, "tipo": "application/pdf", "nombre": f["numero"] + ".pdf" }
+}

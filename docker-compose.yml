@@ -33,6 +33,15 @@ services:
       ORION_BD: postgres://comercio:comercio@postgres:5432/comercio
       ORION_JWT: secreto-compartido-entre-instancias
       ORION_INSTANCIA: app1
+      # La pasarela es otro servicio; su aviso llega por el balanceador.
+      ORION_PASARELA_URL: http://pasarela:8090/pasarela
+      ORION_URL_INTERNA: http://balanceador
+      ORION_PASARELA_CLAVE: clave-de-juguete
+      ORION_PASARELA_SECRETO: secreto-de-juguete
+      # Las facturas salen por correo al buzón falso (http://localhost:8025).
+      ORION_SMTP_HOST: correo
+      ORION_SMTP_PUERTO: "1025"
+      ORION_SMTP_SEGURIDAD: ninguna
     depends_on:
       postgres:
         condition: service_healthy
@@ -78,6 +87,28 @@ services:
       postgres:
         condition: service_healthy
 
+  # Buzón falso para probar el correo: recibe todo y lo enseña en
+  # http://localhost:8025, sin mandar nada a nadie de verdad.
+  correo:
+    image: axllent/mailpit:latest
+    container_name: comercio-correo
+    ports:
+      - "1025:1025"
+      - "8025:8025"
+
+  # Pasarela de pago simulada: otro proceso de Orion, con sus propias tablas.
+  pasarela:
+    build: .
+    command: ["orion", "--run", "pasarela/main.orx"]
+    environment:
+      ORION_BD: postgres://comercio:comercio@postgres:5432/comercio
+      ORION_PASARELA_CLAVE: clave-de-juguete
+      ORION_PASARELA_SECRETO: secreto-de-juguete
+      PORT: "8090"
+    depends_on:
+      postgres:
+        condition: service_healthy
+
   balanceador:
     image: nginx:alpine
     ports:
@@ -88,6 +119,7 @@ services:
       - app1
       - app2
       - app3
+      - pasarela
 
 volumes:
   comercio-datos:

@@ -67,6 +67,27 @@ fn agregar(usuario_id, producto_id, cantidad) {
     return { "ok": yes, "error": "" }
 }
 
+-- Fija la cantidad de una línea. Como al añadir, el stock es solo un aviso:
+-- quien decide es el checkout.
+fn cambiar(usuario_id, linea_id, cantidad) {
+    if cantidad < 1 {
+        return { "ok": no, "error": "la cantidad tiene que ser al menos 1" }
+    }
+    l = db.first(config.BD, "
+        SELECT p.stock FROM lineas l
+        JOIN carritos c  ON c.id = l.carrito_id
+        JOIN productos p ON p.id = l.producto_id
+        WHERE l.id = ? AND c.usuario_id = ?", [linea_id, usuario_id])
+    if l == null {
+        return { "ok": no, "error": "esa línea no está en tu carrito" }
+    }
+    if cantidad > l["stock"] {
+        return { "ok": no, "error": "solo quedan " + str(l["stock"]) + " unidades" }
+    }
+    db.exec(config.BD, "UPDATE lineas SET cantidad = ? WHERE id = ?", [cantidad, linea_id])
+    return { "ok": yes, "error": "" }
+}
+
 fn quitar(usuario_id, linea_id) {
     db.exec(config.BD, "
         DELETE FROM lineas

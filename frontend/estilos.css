@@ -365,3 +365,83 @@ code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: .
 .medida .medida-pista div { background: var(--suave) }
 .medida.rapida .medida-pista div { background: var(--acento) }
 .medida ul { margin: .2rem 0 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: .25rem; font-size: .8rem }
+
+/*  Tarjeta: toda ella abre la ficha  */
+.producto { cursor: pointer }
+.producto h3 a { color: inherit; text-decoration: none }
+.producto h3 a:hover { color: var(--acento) }
+
+/*  Ficha del producto  */
+.vista { padding: 1.5rem 0 2.5rem; min-height: 60vh }
+.migas { display: flex; gap: .45rem; flex-wrap: wrap; font-size: .85rem; color: var(--suave); margin-bottom: 1.25rem }
+.migas a { color: var(--suave); text-decoration: none }
+.migas a:hover { color: var(--acento) }
+.migas span:last-child { color: var(--tinta) }
+.ficha { display: grid; gap: 2rem; grid-template-columns: minmax(0, 1fr) minmax(0, 1.1fr); align-items: start }
+.ficha-lienzo { aspect-ratio: 4 / 3; height: auto; border-radius: var(--radio); border: 1px solid var(--borde); overflow: hidden }
+.ficha-info { display: flex; flex-direction: column; gap: .55rem }
+.ficha-info h1 { margin: 0; font-size: clamp(1.4rem, 3vw, 1.9rem); letter-spacing: -.02em; line-height: 1.2 }
+.ficha-desc { margin: 0; color: var(--suave) }
+.ficha-precio { font-size: 1.8rem; font-variant-numeric: tabular-nums; letter-spacing: -.02em; margin-top: .3rem }
+.ficha-stock { margin: 0; font-size: .88rem; font-weight: 600; color: var(--acento) }
+.ficha-stock.pocas { color: #b45309 }
+.ficha-stock.agotado { color: var(--rojo) }
+.ficha-compra { display: flex; gap: .75rem; flex-wrap: wrap; align-items: center; margin: .5rem 0 .75rem }
+.ficha-compra .btn-principal { padding: .75rem 1.4rem; font-size: .95rem }
+.ficha-detalle { margin: .5rem 0 0; line-height: 1.6 }
+.ficha-info h2, .relacionados h2 { margin: 1rem 0 .3rem; font-size: 1.05rem }
+.caracteristicas { margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: .4rem }
+.caracteristicas li { position: relative; padding-left: 1.5rem; font-size: .92rem }
+.caracteristicas li::before { content: "✓"; position: absolute; left: 0; color: var(--acento); font-weight: 700 }
+.relacionados { margin-top: 2.5rem }
+.relacionados .rejilla { margin-top: .75rem }
+.ficha-esqueleto { height: 24rem }
+
+/*  Selector de cantidad  */
+.cantidad { display: inline-flex; align-items: center; border: 1px solid var(--borde); border-radius: .55rem; overflow: hidden; background: var(--carta) }
+.cantidad button { width: 2.5rem; height: 2.6rem; font-size: 1.15rem; color: var(--tinta) }
+.cantidad button:hover:not(:disabled) { background: var(--papel); color: var(--acento) }
+.cantidad button:disabled { opacity: .35; cursor: default }
+.cantidad input {
+  width: 3.2rem; height: 2.6rem; text-align: center; border: 0; border-inline: 1px solid var(--borde);
+  background: transparent; color: inherit; font: inherit; font-variant-numeric: tabular-nums; -moz-appearance: textfield;
+}
+.cantidad input::-webkit-inner-spin-button, .cantidad input::-webkit-outer-spin-button { -webkit-appearance: none; margin: 0 }
+.cantidad.mini { margin-top: .35rem }
+.cantidad.mini button { width: 1.8rem; height: 1.7rem; font-size: .95rem }
+.cantidad.mini span { min-width: 1.8rem; text-align: center; font-size: .85rem; font-variant-numeric: tabular-nums }
+
+/*  Mis pedidos y confirmación  */
+.titulo-vista { margin: 0 0 1.25rem; font-size: 1.5rem; letter-spacing: -.02em }
+.pedido {
+  background: var(--carta); border: 1px solid var(--borde); border-radius: var(--radio);
+  padding: 1rem 1.1rem; margin-bottom: 1rem; display: flex; flex-direction: column; gap: .75rem;
+}
+.pedido header { display: flex; align-items: center; gap: .75rem; flex-wrap: wrap }
+.pedido .pedido-total { margin-left: auto; font-variant-numeric: tabular-nums; font-size: 1.05rem }
+.pedido p { margin: 0 }
+.pedido .tabla-envoltorio { border-radius: .5rem }
+.enlace-tabla { color: inherit; text-decoration: none; font-weight: 600; margin-right: .4rem }
+.enlace-tabla:hover { color: var(--acento) }
+.confirmacion { max-width: 44rem; margin: 1rem auto; text-align: center; display: flex; flex-direction: column; gap: .9rem }
+.confirmacion h1 { margin: 0; font-size: 1.7rem; letter-spacing: -.02em }
+.confirmacion p { margin: 0; color: var(--suave) }
+.confirmacion .tabla-envoltorio { text-align: left }
+.confirmacion-marca {
+  width: 3.5rem; height: 3.5rem; margin: 0 auto; border-radius: 50%; display: grid; place-items: center;
+  font-size: 1.7rem; font-weight: 700; color: var(--sobre-acento); background: var(--acento);
+}
+.confirmacion-acciones { justify-content: center; flex-wrap: wrap }
+.confirmacion-acciones a { text-decoration: none }
+
+@media (max-width: 46rem) {
+  .ficha { grid-template-columns: 1fr; gap: 1.25rem }
+  .ficha-lienzo { aspect-ratio: 16 / 10 }
+}
+
+/*  Pago  */
+.estado-pendiente_pago { background: color-mix(in srgb, #8b5cf6 18%, transparent); color: #8b5cf6 }
+.estado-caducado { color: var(--suave) }
+.pedido-pie { display: flex; align-items: center; gap: .75rem; flex-wrap: wrap }
+.pedido-pie .tenue { flex: 1; min-width: 14rem }
+.confirmacion-marca.pendiente { background: var(--borde); color: var(--tinta) }

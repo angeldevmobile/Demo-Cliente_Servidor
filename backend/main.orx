@@ -11,6 +11,9 @@ use "backend/admin" as admin
 use "backend/informes" as informes
 use "backend/importar" as importar
 use "backend/monitor" as monitor
+use "backend/pagos" as pagos
+use "backend/facturas" as facturas
+use "pasarela/pasarela" as pasarela
 
 fn api_productos(req) {
     return http.json_resp(200, catalogo.listar(http.texto(req, "q"), http.texto(req, "cat"), http.entero(req, "limite", 0)))
@@ -75,6 +78,15 @@ fn api_agregar(req) {
     return http.json_resp(200, carrito.resumen(cuentas.id_de(req)))
 }
 
+fn api_cambiar(req) {
+    cant = http.campo_entero(http.cuerpo(req), "cantidad", 0)
+    r = carrito.cambiar(cuentas.id_de(req), http.id_ruta(req), cant)
+    if not r["ok"] {
+        return http.json_resp(409, { "error": r["error"] })
+    }
+    return http.json_resp(200, carrito.resumen(cuentas.id_de(req)))
+}
+
 fn api_quitar(req) {
     carrito.quitar(cuentas.id_de(req), http.id_ruta(req))
     return http.json_resp(200, carrito.resumen(cuentas.id_de(req)))
@@ -91,6 +103,36 @@ fn api_checkout(req) {
 
 fn api_pedidos(req) {
     return http.json_resp(200, pedidos.mios(cuentas.id_de(req)))
+}
+
+-- Lleva a la pasarela: crea el cargo (o reutiliza el que había) y devuelve
+-- la URL de pago. Se puede repetir desde "Mis pedidos" si el primer intento falló.
+fn api_pagar(req) {
+    r = pagos.iniciar(cuentas.id_de(req), http.id_ruta(req), pagos.origen(req))
+    if not r["ok"] {
+        return http.json_resp(r["codigo"], { "error": r["error"] })
+    }
+    return http.json_resp(200, { "url_pago": r["url_pago"] })
+}
+
+-- El PDF de la factura, solo para el dueño del pedido.
+fn api_factura(req) {
+    d = facturas.descargar(cuentas.id_de(req), http.id_ruta(req))
+    if d == null {
+        return http.json_resp(404, { "error": "esa factura no existe o aún no está lista" })
+    }
+    return { "file": d["ruta"], "content_type": d["tipo"],
+             "headers": { "Content-Disposition": "attachment; filename=\"" + d["nombre"] + "\"" } }
+}
+
+-- El webhook de la pasarela. Sin JWT: lo que lo autentica es la firma.
+fn api_aviso_pago(req) {
+    r = pagos.recibir(req)
+    if r["codigo"] != 200 {
+        show "  aviso de pago rechazado: " + r["error"]
+        return http.json_resp(r["codigo"], { "error": r["error"] })
+    }
+    return http.json_resp(200, { "recibido": yes, "resultado": r["resultado"] })
 }
 
 fn api_salud(req) {
@@ -236,9 +278,13 @@ router.post(r, "/api/login",         "api_login")
 router.get(r,  "/api/yo",            "api_yo")
 router.get(r,    "/api/carrito",      "api_carrito")
 router.post(r,   "/api/carrito",      "api_agregar")
+router.put(r,    "/api/carrito/:id",  "api_cambiar")
 router.delete(r, "/api/carrito/:id",  "api_quitar")
 router.post(r,   "/api/checkout",     "api_checkout")
 router.get(r,    "/api/pedidos",      "api_pedidos")
+router.post(r,   "/api/pedidos/:id/pagar", "api_pagar")
+router.get(r,    "/api/pedidos/:id/factura", "api_factura")
+router.post(r,   "/api/pagos/aviso",  "api_aviso_pago")
 router.get(r, "/health",             "api_salud")
 
 router.get(r,  "/api/admin/resumen",              "api_admin_resumen")
@@ -266,6 +312,11 @@ router.guard(r, "/api/checkout", config.JWT_SECRETO)
 router.guard(r, "/api/pedidos",  config.JWT_SECRETO)
 router.guard(r, "/api/admin",    config.JWT_SECRETO)
 router.use_middleware(r, "solo_admin")
+-- Sin una pasarela aparte, la simulada se monta aquí mismo bajo /pasarela.
+if config.PASARELA_INTEGRADA {
+    pasarela.preparar()
+    pasarela.montar(r)
+}
 router.static(r, "/", config.FRONTEND)
 router.attach(r)
 

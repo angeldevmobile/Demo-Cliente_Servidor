@@ -263,7 +263,7 @@ async function cargarPedidos() {
       <td>${escapar(p.cliente)}<br><span class="tenue">${escapar(p.email)}</span></td>
       <td class="num">${NUM.format(p.unidades)}</td>
       <td class="num">${EUR.format(p.total)}</td>
-      <td><span class="estado estado-${p.estado}">${p.estado}</span></td>
+      <td><span class="estado estado-${p.estado}">${p.estado.replace("_", " ")}</span></td>
       <td>${p.factura ? escapar(p.factura) : '<span class="tenue">en cola</span>'}</td>
       <td class="acciones-fila">${(SIGUIENTE[p.estado] || []).map(([e, t]) =>
         `<button class="enlace ${e === "cancelado" ? "rojo" : ""}" data-pedido="${p.id}" data-estado="${e}">${t}</button>`).join("")}</td>

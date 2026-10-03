@@ -1,26 +1,51 @@
 -- Carga masiva del catálogo desde un CSV por COPY. Para archivos grandes,
 -- herramientas/importar.orx (ver el README, fase 5).
 use "db" as db
+use "csv" as csv
 use "fs" as fs
 use "crypto" as crypto
 use "timewarp" as tw
 use "backend/config" as config
 
 COLUMNAS = ["sku", "nombre", "descripcion", "categoria", "precio", "stock"]
+-- La ficha del producto. Si el archivo no las trae, lo que ya había se queda.
+OPCIONALES = ["detalle", "caracteristicas"]
+
+-- Las columnas del archivo, en su orden: COPY las asigna por posición. Solo se
+-- lee la cabecera, no el archivo entero.
+fn columnas_de(ruta) {
+    cabecera = []
+    for c in csv.headers(ruta) {
+        cabecera.push(c.lower())
+    }
+    for c in COLUMNAS {
+        if not cabecera.contains(c) {
+            error("al CSV le falta la columna '" + c + "'. Hacen falta: " + COLUMNAS.join(", "))
+        }
+    }
+    for c in cabecera {
+        if not COLUMNAS.contains(c) and not OPCIONALES.contains(c) {
+            error("columna desconocida '" + c + "'. Valen: " + (COLUMNAS + OPCIONALES).join(", "))
+        }
+    }
+    return cabecera
+}
 
 -- COPY en streaming a una tabla de paso con columnas de texto, revisión de
 -- todas las filas (para decir qué SKU falla y por qué) y fusión en una sola
 -- sentencia. La tabla de paso es UNLOGGED y con nombre aleatorio.
 fn cargar(ruta) {
     reloj = tw.clock()
+    columnas = columnas_de(ruta)
     paso = "carga_" + crypto.token(12)
 
     db.exec(config.BD, "CREATE UNLOGGED TABLE " + paso + " (
-        sku TEXT, nombre TEXT, descripcion TEXT, categoria TEXT, precio TEXT, stock TEXT
+        sku TEXT, nombre TEXT, descripcion TEXT, categoria TEXT, precio TEXT, stock TEXT,
+        detalle TEXT, caracteristicas TEXT
     )")
 
     attempt {
-        r = copiar_y_fusionar(paso, ruta, reloj)
+        r = copiar_y_fusionar(paso, ruta, columnas, reloj)
     } handle err {
         db.exec(config.BD, "DROP TABLE IF EXISTS " + paso)
         error(str(err))
@@ -35,8 +60,8 @@ fn cargar(ruta) {
     return r
 }
 
-fn copiar_y_fusionar(paso, ruta, reloj) {
-    filas = db.copy_file(config.BD, paso, COLUMNAS, ruta, { "header": yes })
+fn copiar_y_fusionar(paso, ruta, columnas, reloj) {
+    filas = db.copy_file(config.BD, paso, columnas, ruta, { "header": yes })
     s_copia = tw.elapsed(reloj)
 
     problema = revisar(paso)
@@ -45,20 +70,30 @@ fn copiar_y_fusionar(paso, ruta, reloj) {
     }
     s_revision = tw.elapsed(reloj) - s_copia
 
+    -- La ficha solo se pisa si el archivo trae esa columna.
+    ficha = ""
+    for c in OPCIONALES {
+        if columnas.contains(c) {
+            ficha = ficha + c + " = EXCLUDED." + c + ", "
+        }
+    }
+
     -- El stock de lo que ya existía no se pisa (se ajusta desde el panel); los
     -- nuevos entran con el suyo. `xmax = 0` distingue insertado de actualizado.
     r = db.first(config.BD, "
         WITH f AS (
-            INSERT INTO productos (sku, nombre, descripcion, categoria, precio, stock)
+            INSERT INTO productos (sku, nombre, descripcion, categoria, precio, stock,
+                                   detalle, caracteristicas)
             SELECT sku, nombre, COALESCE(descripcion, ''), lower(categoria),
-                   precio::numeric(10,2), stock::integer
+                   precio::numeric(10,2), stock::integer,
+                   COALESCE(detalle, ''), COALESCE(caracteristicas, '')
             FROM " + paso + "
             ON CONFLICT (sku) DO UPDATE SET
                 nombre      = EXCLUDED.nombre,
                 descripcion = EXCLUDED.descripcion,
                 categoria   = EXCLUDED.categoria,
                 precio      = EXCLUDED.precio,
-                activo      = true
+                " + ficha + "activo = true
             RETURNING (xmax = 0) AS nuevo
         )
         SELECT COUNT(*) FILTER (WHERE nuevo) AS nuevos,
