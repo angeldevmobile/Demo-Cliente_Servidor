@@ -35,13 +35,15 @@ fn latido(nombre, tipo) {
             [nombre, tipo, proceso.version(), proceso.pid(), str(proceso.uptime()), rss, pico])
 }
 
+-- Sin señal en 2 minutos, el proceso está muerto: un reinicio o una prueba
+-- antigua. La página pregunta cada 2 s, así que las web vivas nunca llegan.
 fn procesos() {
     return db.query(config.BD, "
         SELECT nombre, tipo, version, pid, rss, pico,
                EXTRACT(EPOCH FROM now() - arranco)::float8 AS vivo_s,
                EXTRACT(EPOCH FROM now() - senal)::float8   AS sin_senal_s
         FROM procesos
-        WHERE senal > now() - interval '1 hour'
+        WHERE senal > now() - interval '2 minutes'
         ORDER BY tipo = 'worker', nombre")
 }
 
@@ -56,13 +58,15 @@ fn trabajos() {
         FROM trabajos ORDER BY id DESC LIMIT 12")
 }
 
--- Quién hizo cuánto: el reparto entre workers sale de la propia cola.
+-- Quién hizo cuánto en las últimas 24 h: el reparto entre workers sale de la
+-- propia cola.
 fn por_worker() {
     return db.query(config.BD, "
         SELECT tomado_por AS worker, COUNT(*)::int AS hechos,
                (AVG(EXTRACT(EPOCH FROM terminado - tomado_en)) * 1000)::float8 AS ms_medio
         FROM trabajos
         WHERE estado = 'hecho' AND tomado_por IS NOT NULL
+          AND terminado > now() - interval '24 hours'
         GROUP BY tomado_por ORDER BY tomado_por")
 }
 

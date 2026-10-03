@@ -90,7 +90,9 @@ function pintarCola(d) {
   $("cola-cuentas").innerHTML = ESTADOS.map((e) =>
     `<span class="chip"><span class="estado estado-${e}">${e}</span> ${NUM.format(d.cola[e] || 0)}</span>`).join("");
 
-  $("por-worker").innerHTML = d.por_worker.map((w) =>
+  $("por-worker").innerHTML = !d.por_worker.length
+    ? `<span class="tenue">Ningún trabajo hecho en las últimas 24 h.</span>`
+    : d.por_worker.map((w) =>
     `<span class="chip"><b>${escapar(w.worker)}</b> ${NUM.format(w.hechos)} hechos · ${ms(w.ms_medio)} de media</span>`).join("");
 
   $("trabajos").innerHTML = d.trabajos.length ? d.trabajos.map((t) => `
